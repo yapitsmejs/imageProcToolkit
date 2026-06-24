@@ -1,5 +1,5 @@
 import numpy as np
-from . import getShifts
+from . import getTranslationalShifts
 from .fftTranslateImage import fftTranslateImage
 from . import clampImageAmplitude as clamp
 from . import normalizeImageAmplitude as norm
@@ -13,7 +13,7 @@ from . import normalizeImageAmplitude as norm
         step 2  clampImageAmplitude          (complex -> amplitude, or real passthrough;
                                               dB-histogram-mode dynamic-range clamp)
         step 3  normalizeImageAmplitude       (clamped amplitude -> per-image uint8)
-        step 4  getShifts                     (all-pairwise phase correlation on the
+        step 4  getTranslationalShifts        (all-pairwise phase correlation on the
                                               uint8 -> zero-mean-gauge per-image
                                               shifts (N, 2))
         step 5  fftTranslateImages             (apply each per-image shift to the
@@ -54,7 +54,7 @@ from . import normalizeImageAmplitude as norm
 # --------------------------------------------------------------------------- #
 def fftTranslateImages(images, shifts, markInvalid=True):
     """Translate each image by its per-image shift (batched step 5). `shifts` is the
-    (N, 2) array returned by getShifts (columns (dy, dx), row order = input order).
+    (N, 2) array returned by getTranslationalShifts (columns (dy, dx), row order = input order).
     Delegates to the atomic fftTranslateImage (imageProcToolkit/fftTranslateImage.py),
     which holds the phase-ramp + pad-and-crop core; this is just the per-image loop,
     kept here in the orchestrator module (fftTranslateImage.py is atomic-only). markInvalid=True
@@ -88,7 +88,7 @@ def coTranslateImages(images, masks=None):
                     NaN border). dtype is preserved: complex in -> complex out
                     (phase preserved), real in -> real out.
         shifts:     (N, 2) array, columns (dy, dx), row order = input order.
-        diag:       checkShiftResiduals dict (residualMax_px, residualMean_px,
+        diag:       checkTranslationalShiftResiduals dict (residualMax_px, residualMean_px,
                     nPairs) -- zero-mean gauge: sum(shifts) = 0, no ground-truth
                     image.
     """
@@ -104,10 +104,10 @@ def coTranslateImages(images, masks=None):
 
     # step 4: all-pairwise phase-correlation shifts on the uint8 (with the
     # input-derived masks) -> zero-mean-gauge per-image shifts. Call the components
-    # (not getShifts.getShifts) so the diag dict is returned alongside t.
-    pw = getShifts.allPairwiseShifts(u8, masks=masks)
-    t = getShifts.solveGlobalShifts(pw, len(images))
-    diag = getShifts.checkShiftResiduals(pw, t)
+    # (not getTranslationalShifts.getTranslationalShifts) so the diag dict is returned alongside t.
+    pw = getTranslationalShifts.allPairwiseTranslationalShifts(u8, masks=masks)
+    t = getTranslationalShifts.solveGlobalTranslationalShifts(pw, len(images))
+    diag = getTranslationalShifts.checkTranslationalShiftResiduals(pw, t)
 
     # step 5: apply each per-image shift to the **original input** (not the uint8 /
     # not the clamped amplitude) via FFT phase-ramp + pad-and-crop. This is the key

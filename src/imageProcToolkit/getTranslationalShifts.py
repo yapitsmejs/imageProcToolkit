@@ -10,7 +10,7 @@ from .fftUpsample import fourierUpsample
     --------------------------------------------------------------------------- #
     Shift convention
 
-    pairwiseShift(A, B) returns s_AB = the translation to apply to **B** to align it to
+    pairwiseTranslationalShift(A, B) returns s_AB = the translation to apply to **B** to align it to
     **A** (A = master, B = slave: F(A) * conj(F(B)), peak -> shift applied to B).
 
     Residual after applying per-image shifts t_i:  res_ij = s_ij - (t_j - t_i).
@@ -179,7 +179,7 @@ def _wraparoundPick(truePeak, shape):
     return float(shift[0]), float(shift[1])
 
 
-def pairwiseShift(imgA, imgB, maskA=None, maskB=None, subpixel=True, upsampleFactor=1):
+def pairwiseTranslationalShift(imgA, imgB, maskA=None, maskB=None, subpixel=True, upsampleFactor=1):
     """Translation to apply to imgB to align it to imgA (s_AB), via phase correlation.
 
     Args:
@@ -202,7 +202,7 @@ def pairwiseShift(imgA, imgB, maskA=None, maskB=None, subpixel=True, upsampleFac
     return dy, dx, peakHeight, float(peakHeight)
 
 
-def allPairwiseShifts(images, masks=None, subpixel=True, upsampleFactor=1):
+def allPairwiseTranslationalShifts(images, masks=None, subpixel=True, upsampleFactor=1):
     """Phase-correlation shift for every i < j pair (A=i, B=j).
 
     Returns dict keyed by (i, j) with i < j -> (dy, dx, peakHeight, confidence). Only the
@@ -214,7 +214,7 @@ def allPairwiseShifts(images, masks=None, subpixel=True, upsampleFactor=1):
         mA = masks[i] if masks is not None else None
         for j in range(i + 1, n):
             mB = masks[j] if masks is not None else None
-            dy, dx, ph, conf = pairwiseShift(images[i], images[j], mA, mB,
+            dy, dx, ph, conf = pairwiseTranslationalShift(images[i], images[j], mA, mB,
                                               subpixel, upsampleFactor)
             pw[(i, j)] = (dy, dx, ph, conf)
     return pw
@@ -223,7 +223,7 @@ def allPairwiseShifts(images, masks=None, subpixel=True, upsampleFactor=1):
 # --------------------------------------------------------------------------- #
 # global least-squares solve (zero-mean gauge)
 # --------------------------------------------------------------------------- #
-def solveGlobalShifts(pairwise, n):
+def solveGlobalTranslationalShifts(pairwise, n):
     """Per-image shifts t_i = (dy_i, dx_i) from the pairwise shifts, zero-mean gauge.
 
     Unweighted least-squares: minimize sum_ij (s_ij - (t_j - t_i))^2 per coordinate. The
@@ -262,7 +262,7 @@ def solveGlobalShifts(pairwise, n):
     return sol[:n, :]
 
 
-def checkShiftResiduals(pairwise, shifts):
+def checkTranslationalShiftResiduals(pairwise, shifts):
     """Per-pair residual res_ij = s_ij - (t_j - t_i); report max / mean over both coords.
 
     Args:
@@ -286,21 +286,21 @@ def checkShiftResiduals(pairwise, shifts):
 # --------------------------------------------------------------------------- #
 # orchestrator
 # --------------------------------------------------------------------------- #
-def getShifts(images, masks=None, subpixel=True, upsampleFactor=1):
+def getTranslationalShifts(images, masks=None, subpixel=True, upsampleFactor=1):
     """Estimate per-image shifts (N, 2) for N images via all-pairwise phase correlation
     + a zero-mean-gauge global least-squares.
 
     Args:
         images: list of N real images (uint8 from step 3).
         masks:  optional list of N boolean valid-pixel masks.
-        subpixel, upsampleFactor: forwarded to pairwiseShift.
+        subpixel, upsampleFactor: forwarded to pairwiseTranslationalShift.
 
     Returns t of shape (N, 2), row order = input order, columns (dy, dx). Also prints
-    the checkShiftResiduals diagnostics to stdout."""
-    pw = allPairwiseShifts(images, masks, subpixel, upsampleFactor)
-    t = solveGlobalShifts(pw, len(images))
-    diag = checkShiftResiduals(pw, t)
-    print(f"[getShifts] {diag['nPairs']} pairs | "
+    the checkTranslationalShiftResiduals diagnostics to stdout."""
+    pw = allPairwiseTranslationalShifts(images, masks, subpixel, upsampleFactor)
+    t = solveGlobalTranslationalShifts(pw, len(images))
+    diag = checkTranslationalShiftResiduals(pw, t)
+    print(f"[getTranslationalShifts] {diag['nPairs']} pairs | "
           f"residualMax={diag['residualMax_px']:.4f}px  "
           f"residualMean={diag['residualMean_px']:.4f}px")
     return t

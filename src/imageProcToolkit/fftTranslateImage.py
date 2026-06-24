@@ -3,15 +3,15 @@ import numpy as np
 '''
     Shift convention
 
-    pairwiseShift(i, j) returns s_ij = the translation to apply to **j** to align it
-    to **i** (F(i) * conj(F(j)), peak -> shift applied to j). getShifts returns
+    pairwiseTranslationalShift(i, j) returns s_ij = the translation to apply to **j** to align it
+    to **i** (F(i) * conj(F(j)), peak -> shift applied to j). getTranslationalShifts returns
     per-image shifts t_i of shape (N, 2), columns (dy, dx), such that the residual
     res_ij = s_ij - (t_j - t_i) is minimized; driving it to zero gives
     **t_j - t_i = s_ij**. Applying fftTranslateImage(image_i, t_i) to each image
     therefore co-registers them under the zero-mean gauge (sum t = 0, no
     ground-truth image). The reference phase ramp exp(-2j*pi*(fx*dx + fy*dy)) gives
     output[n] = input[n - (dy, dx)] -- content moves by (dy, dx) -- identical to
-    getShifts._fftShiftPeriodic, whose self-check confirms the sign.
+    getTranslationalShifts._fftShiftPeriodic, whose self-check confirms the sign.
 
     --------------------------------------------------------------------------- #
     Port of temp/_registration.py:25-64, with the fixes below
@@ -73,7 +73,7 @@ def fftTranslateImage(image, shift, markInvalid=True):
 
     The phase ramp exp(-2j*pi*(fx*dx + fy*dy)) gives output[n] = input[n - (dy, dx)]
     -- content moves by (dy, dx) -- so fftTranslateImage(img, s) applies exactly the
-    shift `s` (the convention getShifts returns: applying t_i to image_i co-registers
+    shift `s` (the convention getTranslationalShifts returns: applying t_i to image_i co-registers
     the set under t_j - t_i = s_ij).
 
     Pad by ceil(|shift|) per axis (the tight bound -- enough for any integer or

@@ -13,7 +13,7 @@ from imageProcToolkit.interp2 import interp2linear
 from imageProcToolkit.fftTranslateImage import fftTranslateImage
 from imageProcToolkit.clampImageAmplitude import clampImageAmplitude
 from imageProcToolkit.normalizeImageAmplitude import normalizeToUint8
-from imageProcToolkit.getShifts import getShifts
+from imageProcToolkit.getTranslationalShifts import getTranslationalShifts
 from imageProcToolkit.coTranslateImages import coTranslateImages
 
 
@@ -27,7 +27,7 @@ def test_all_submodules_importable():
     import imageProcToolkit.coTranslateImages    # noqa: F401
     import imageProcToolkit.fftTranslateImage    # noqa: F401
     import imageProcToolkit.fftUpsample          # noqa: F401
-    import imageProcToolkit.getShifts            # noqa: F401
+    import imageProcToolkit.getTranslationalShifts  # noqa: F401
     import imageProcToolkit.interp2              # noqa: F401
     import imageProcToolkit.normalizeImageAmplitude  # noqa: F401
 
@@ -65,12 +65,13 @@ def test_interp2linear_basic():
     assert out.shape == xi.shape
 
 
-def test_getshifts_and_coTranslateImages_callable():
+def test_getTranslationalShifts_and_coTranslateImages_callable():
     # Existence + signature sanity; relative imports inside these modules
-    # (getShifts -> fftUpsample, coTranslateImages -> getShifts/fftTranslateImage/
-    # clamp/norm) are what we really want to confirm here.
-    assert callable(getShifts)
+    # (getTranslationalShifts -> fftUpsample, coTranslateImages ->
+    #  getTranslationalShifts/fftTranslateImage/clamp/norm) are what we really want
+    # to confirm here.
+    assert callable(getTranslationalShifts)
     assert callable(coTranslateImages)
     imgs = [np.zeros((8, 8), dtype=np.float32) for _ in range(2)]
-    shifts = getShifts(imgs, subpixel=False)
+    shifts = getTranslationalShifts(imgs, subpixel=False)
     assert shifts.shape[0] == 2

@@ -5,7 +5,7 @@ A collection of flat accelerator / utility modules:
 - ``fftUpsample``      — FFT zero-padding upsampler (cupy GPU backend, NumPy fallback).
 - ``interp2``          — MATLAB ``interp2(...,'linear')`` port (numba fused-kernel backend).
 - ``fftTranslateImage``— atomic FFT sub-pixel image translation.
-- ``getShifts``        — all-pairwise phase-correlation shift estimation (co-registration step 4).
+- ``getTranslationalShifts`` — all-pairwise phase-correlation shift estimation (co-registration step 4).
 - ``clampImageAmplitude``   — amplitude dynamic-range clamp (co-registration step 2).
 - ``normalizeImageAmplitude``— per-image amplitude -> uint8 normalization (co-registration step 3).
 - ``coTranslateImages``— the multi-image co-registration orchestrator (steps 2-5).

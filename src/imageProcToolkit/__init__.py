@@ -16,8 +16,8 @@ Import the public callables from their submodules explicitly, e.g.::
     from imageProcToolkit.interp2 import interp2linear
 
 The L1->L2 pipeline modules (``geometricCorrectionPFA``, ``groundPlaneMatching``,
-``processL1ToL2``, ``processPassL1ToL2``, ``t2CoordinateTransform``) live one level up
-in ``src/`` and are consumers of this toolkit, not part of the package.
+``processL1ToL2``, ``processPassL1ToL2``, ``t2CoordinateTransform``) live in a separate
+consumer package and import this toolkit; they are not part of the package itself.
 """
 
 __version__ = "0.1.0"

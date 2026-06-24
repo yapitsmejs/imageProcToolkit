@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "imageProcToolkit"
+version = "0.1.0"
+description = "Image-processing toolkit (FFT upsampling, interpolation, sub-pixel translation, co-registration) used by the t2Interface L1->L2 pipeline."
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Yap Joon Siong"}]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "numba",
+]
+
+[project.optional-dependencies]
+# cupy ships as several mutually-exclusive CUDA wheels (cupy-cuda{11,12,13}x or
+# self-contained cupy); install the wheel that matches your host CUDA toolkit.
+# A usable GPU is NOT required for the base package -- cupy is an optional GPU
+# fast-path with a NumPy fallback when absent.
+gpu = ["cupy"]
+
+[project.urls]
+# Homepage = "https://github.com/<user>/imageProcToolkit"
+
+[tool.setuptools.packages.find]
+where = ["src"]

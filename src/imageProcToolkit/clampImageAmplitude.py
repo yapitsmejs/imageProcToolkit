@@ -9,19 +9,15 @@ import numpy as np
     first (phase discarded, since the clamp operates on brightness only); real
     input is passed through as float32.
 
-    This is the dB-histogram-mode clamp from the tested reference at
-    temp/_registration.py (reduceDynamicRange), refactored so that:
+    This is a dB-histogram-mode clamp, factored so that:
 
       * it returns the clamped *linear amplitude* (not a normalized image) --
         normalization is decoupled into imageProcToolkit/normalizeImageAmplitude.py (step 3);
-      * the input ndim is preserved (the reference added a channel axis at line 77
-        and never squeezed it);
-      * nanmax / |crossPower| divisions and the all-NaN / all-zero cases are guarded
-        (the reference divided by np.nanmax unguarded at line 79);
-      * it is pure numpy -- the reference's cv2.normalize (only used in the normalize
-        half, not the clamp half) is not needed here.
+      * the input ndim is preserved (no spurious channel axis is added);
+      * nanmax / |crossPower| divisions and the all-NaN / all-zero cases are guarded;
+      * it is pure numpy.
 
-    Radio calibration is out of scope (same as the rest of the pipeline).
+    Radio calibration is out of scope.
 '''
 
 
@@ -52,10 +48,10 @@ def amplitudePowerDB(amp):
 def dBHistogramMode(dBimage, outputDynamicRangePowerDB=60.0,
                     inputDynamicRangePowerDB=None, binsPerDB=5):
     """Mode of the dB-amplitude histogram, smoothed by a moving-average window of
-    width outputDynamicRangePowerDB (in dB). This is the reference's mode finder
-    (lines 82-92): the bulk of a SAR amplitude histogram sits in a narrow dB band
-    (the clutter mode), well below the bright-scatterer tail, so the mode -- not the
-    mean/median -- is the right centre for the clamp window.
+    width outputDynamicRangePowerDB (in dB): the bulk of a SAR amplitude histogram
+    sits in a narrow dB band (the clutter mode), well below the bright-scatterer
+    tail, so the mode -- not the mean/median -- is the right centre for the clamp
+    window.
 
     Args:
         dBimage: dB amplitude (from amplitudePowerDB). Non-finite values are ignored.

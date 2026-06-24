@@ -1,7 +1,7 @@
 import numpy as np
 
 '''
-    Step 3 of the multi-image co-registration pipeline (see REGISTRATION_PLAN.md).
+    Step 3 of the multi-image co-registration pipeline.
 
     Per-image min-max map to uint8 [0, 255] for the estimation / display branch. Works
     on both complex and real input -- complex is reduced to amplitude (|.|) first (the
@@ -11,9 +11,9 @@ import numpy as np
     NaNs / non-finite values map to the sentinel 0. NB: because NaN -> 0, a NaN border
     is *undetectable* in the uint8 output, so a downstream step that needs a valid-pixel
     mask (e.g. step 4 phase correlation) must derive it from the **original input**'s
-    finiteness, not from the uint8 (see REGISTRATION_PLAN.md).
+    finiteness, not from the uint8.
 
-    Radio calibration is out of scope (same as the rest of the pipeline).
+    Radio calibration is out of scope.
 '''
 
 

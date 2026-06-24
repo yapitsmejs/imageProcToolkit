@@ -3,11 +3,11 @@ import numpy as np
 # cupy is intentionally NOT a declared dependency (it ships as several
 # mutually-exclusive wheels — cupy-cuda{11,12,13}x toolkitless, or self-contained
 # cupy — that all install the `cupy` package, so the right one is host-specific;
-# install via setup_cupy.py). A *usable GPU* is not required: detect at import
-# whether a CUDA device is actually present and fall back to the NumPy FFT path
-# if not. cupy imports fine without a GPU/CUDA driver; the failure surfaces only
-# when querying devices, so we guard getDeviceCount and treat 0/exception as
-# "no GPU". The module never hard-fails on a CPU-only host.
+# install the wheel matching your host CUDA toolkit. A *usable GPU* is not
+# required: detect at import whether a CUDA device is actually present and fall
+# back to the NumPy FFT path if not. cupy imports fine without a GPU/CUDA driver;
+# the failure surfaces only when querying devices, so we guard getDeviceCount and
+# treat 0/exception as "no GPU". The module never hard-fails on a CPU-only host.
 try:
     import cupy as cp
     try:

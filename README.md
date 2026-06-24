@@ -1,9 +1,9 @@
 # imageProcToolkit
 
-Image-processing toolkit used by the `t2Interface` L1→L2 pipeline: FFT zero-padding
-upsampling, MATLAB-style bilinear interpolation, atomic sub-pixel image translation,
-all-pairwise phase-correlation shift estimation, amplitude clamping/normalization, and
-the multi-image co-registration orchestrator.
+Image-processing toolkit: FFT zero-padding upsampling, MATLAB-style bilinear
+interpolation, atomic sub-pixel image translation, all-pairwise phase-correlation
+shift estimation, amplitude clamping/normalization, and the multi-image
+co-registration orchestrator.
 
 ## Installation
 

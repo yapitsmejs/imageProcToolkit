@@ -7,8 +7,8 @@ from . import normalizeImageAmplitude as norm
 '''
     Orchestrator for the multi-image co-registration pipeline
 
-    Co-register N images that are **already rotation-aligned** (step 1
-    `groundPlaneMatching` applied externally) by running steps 2-3-4-5:
+    Co-register N images that are **already rotation-aligned** (rotation alignment is
+    performed outside this toolkit) by running steps 2-3-4-5:
 
         step 2  clampImageAmplitude          (complex -> amplitude, or real passthrough;
                                               dB-histogram-mode dynamic-range clamp)
@@ -27,14 +27,14 @@ from . import normalizeImageAmplitude as norm
     real in -> real out (amplitude). This is why accepting complex input is useful at
     all; the clamp does not discard phase from the output.
 
-    Masks: complex/real inputs may have NaN borders (e.g. step-1 rotated footprints),
+    Masks: complex/real inputs may have NaN borders (e.g. from a prior rotation step),
     and `normalizeToUint8` maps NaN -> 0 sentinel (so the border is undetectable in the
     uint8). The valid-pixel mask is therefore derived from `np.isfinite` of the
     **original input** (before clamp), not from the uint8.
 
-    Preconditions (asserted, not run): the inputs are already rotation-aligned (step 1
-    external). Steps 2-3 are run internally, so the caller passes raw complex/real L2
-    images -- no params.json, no shared groundPlaneMetaData.json, just the N arrays.
+    Preconditions (asserted, not run): the inputs are already rotation-aligned.
+    Steps 2-3 are run internally, so the caller passes raw complex/real images -- just
+    the N arrays.
 
     The orchestrator writes nothing to disk; the __main__ demo loads N .npy, runs
     2->3->4->5, prints the shifts + residuals, and shows a before/after red-cyan
@@ -74,8 +74,8 @@ def coTranslateImages(images, masks=None):
     """Co-register N already-rotation-aligned complex-or-real images (steps 2-3-4-5).
 
     Args:
-        images: list of N complex or real images, already rotation-aligned (step 1
-                external). May contain NaN borders; these are masked for shift
+        images: list of N complex or real images, already rotation-aligned
+                (rotation alignment is performed outside this toolkit). May contain NaN borders; these are masked for shift
                 estimation (derived from the input, not the uint8).
         masks:  optional list of N boolean valid-pixel masks. If None, derived from
                 np.isfinite of each input. NB: masks must come from the input, NOT the

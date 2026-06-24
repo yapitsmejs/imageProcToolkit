@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "imageProcToolkit"
 version = "0.1.0"
-description = "Image-processing toolkit (FFT upsampling, interpolation, sub-pixel translation, co-registration) used by the t2Interface L1->L2 pipeline."
+description = "Image-processing toolkit (FFT upsampling, interpolation, sub-pixel translation, co-registration)."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [{name = "Yap Joon Siong"}]

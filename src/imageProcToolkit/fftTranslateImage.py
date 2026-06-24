@@ -14,45 +14,43 @@ import numpy as np
     getTranslationalShifts._fftShiftPeriodic, whose self-check confirms the sign.
 
     --------------------------------------------------------------------------- #
-    Port of temp/_registration.py:25-64, with the fixes below
+    Implementation notes
 
-    * Crop-slice fix (zero-shift latent bug): the reference crops [padY:-padY,
-      padX:-padX], which is the empty slice [0:0] when a pad component is 0 (zero
-      shift). Fixed to [padY:padY+H, padX:padX+W] on the padded array (a true
-      no-op slice when pad = 0, identical to the reference for pad > 0). Applied in
-      both the CPU and GPU branches.
+    * Crop-slice (zero-shift no-op): the padded array is cropped back with
+      [padY:padY+H, padX:padX+W]. The naively symmetric [padY:-padY, padX:-padX]
+      would collapse to the empty slice [0:0] when a pad component is 0 (zero
+      shift); the explicit end-index form is a true no-op slice when pad = 0 and
+      identical otherwise. Applied in both the CPU and GPU branches.
     * Dtype preservation: np.fft.fft2 upcasts complex64 -> complex128 (and float32
       -> complex128); cast back with .astype(image.dtype) at a single return point
       so the on-disk complex64 row-major contract is preserved.
-    * Line-63 bug fix: the reference's CPU real-input branch referenced the
-      undefined `translatedImageGpu` -> NameError. Use np.abs(translatedImage),
-      mirroring the GPU branch. The real-input branch is kept for parity and so the
-      self-check runs on the real float32 _syntheticBase without an awkward complex
-      cast.
-    * pycuda dropped (the reference's unconditional import pycuda.autoinit); cupy
-      stays optional behind the guarded switch, mirroring geometricCorrectionPFA's
-      "move once, compute on GPU, bring back once" pattern.
-    * markInvalid (default True): the reference's commented-out NaN-mask is promoted
-      to an optional arg. A pixel output[r, c] = input[r - dy, c - dx] has a real
-      source sample iff 0 <= r - dy < H and 0 <= c - dx < W; pixels outside that
+    * Real-input branch: takes np.abs of the phase-ramp IFFT (the imaginary part is
+      ~0 residual). Kept for parity with the GPU branch and so the self-check runs
+      on a real float32 input without an awkward complex cast.
+    * cupy is an optional GPU fast-path behind a guarded switch (see below) -- a
+      caller that moves data to the GPU once keeps it there across chained ops
+      ("move once, compute on GPU, bring back once").
+    * markInvalid (default True): a pixel output[r, c] = input[r - dy, c - dx] has a
+      real source sample iff 0 <= r - dy < H and 0 <= c - dx < W; pixels outside that
       region (the shifted-out border that lost data to the zero-pad) are set to NaN
       so interferometry never treats a fake zero border as real data. This grows the
       NaN border on every look -- the intended, cleaner behaviour. markInvalid=False
-      restores the reference's shipped behaviour (zero-fill).
+      leaves the shifted-out / input-NaN regions as the raw (zero-filled, possibly
+      ringing) values.
 
     The pad-and-crop trick zero-pads by ceil(|shift|) per axis, phase-ramps the
     padded FFT, then crops back: zero-pad avoids circular wraparound but introduces
     mild edge ringing from the broken periodicity -- fine for the small registration
     shifts expected here, and strictly better than a raw circular shift.
 
-    Radio calibration is out of scope (same as the rest of the pipeline).
+    Radio calibration is out of scope.
 '''
 
-# cupy is an optional GPU fast-path for the phase-ramp FFTs, mirroring
-# geometricCorrectionPFA.py's guarded switch. A usable GPU is not required: detect at
-# import whether a CUDA device is actually present and fall back to the NumPy FFT path
-# everywhere if not. cupy imports fine without a GPU/driver; the failure surfaces only
-# when querying devices, so we guard getDeviceCount and treat 0/exception as "no GPU".
+# cupy is an optional GPU fast-path for the phase-ramp FFTs. A usable GPU is not
+# required: detect at import whether a CUDA device is actually present and fall back
+# to the NumPy FFT path everywhere if not. cupy imports fine without a GPU/driver;
+# the failure surfaces only when querying devices, so we guard getDeviceCount and
+# treat 0/exception as "no GPU".
 try:
     import cupy as cp
     try:
@@ -79,7 +77,7 @@ def fftTranslateImage(image, shift, markInvalid=True):
     Pad by ceil(|shift|) per axis (the tight bound -- enough for any integer or
     sub-pixel shift), phase-ramp the padded FFT, inverse-FFT, then crop back to the
     original shape. Zero-pad avoids circular wraparound at the cost of mild edge
-    ringing. Input NaN borders (step 1's rotated footprints have them) are handled
+    ringing. Input NaN borders (e.g. from a prior rotation/alignment step) are handled
     explicitly: NaNs are zero-filled before the FFT so they do not propagate through
     it (an NaN anywhere in fft2 poisons the whole array), and the output's valid
     region is re-derived from the input finiteness mask shifted by (dy, dx).
@@ -87,7 +85,7 @@ def fftTranslateImage(image, shift, markInvalid=True):
     Args:
         image: (H, W) complex (or real) array, on-disk L2 convention
                (axis 0 = range/y/rows, axis 1 = azimuth/x/columns). May contain NaN
-               borders (e.g. step 1 output); these are zero-filled before the FFT.
+               borders (e.g. from a prior rotation step); these are zero-filled before the FFT.
         shift: (dy, dx) = (shiftY, shiftX); dy along rows (range/y), dx along cols
                (azimuth/x).
         markInvalid: if True (default), set the output to NaN where the source has no
@@ -95,8 +93,7 @@ def fftTranslateImage(image, shift, markInvalid=True):
             bounds OR the source pixel was NaN in the input -- so neither the fake
             zero-pad border nor the shifted input-NaN border is treated as real data
             downstream. If False, leave the shifted-out / input-NaN regions as the
-            raw (zero-filled, possibly ringing) values (the reference's shipped
-            behaviour, minus the NaN propagation that this zero-fill fixes). Note
+            raw (zero-filled, possibly ringing) values. Note
             this marks the strictly no-source region, not the mild sinc ringing that
             bleeds a few pixels into the valid region from the zero-pad
             discontinuity (in practice tiny for band-limited SAR content).
@@ -124,9 +121,9 @@ def fftTranslateImage(image, shift, markInvalid=True):
     padX = int(np.ceil(abs(dx)))
 
     # crop back to the original shape from the padded array (H+2*padY, W+2*padX).
-    # Using explicit end indices [padY:padY+H, padX:padX+W] instead of the
-    # reference's [padY:-padY, padX:-padX] fixes the zero-shift latent bug: the
-    # latter is the empty slice [0:0] when a pad is 0, this gives [0:H] (a no-op).
+    # Explicit end indices [padY:padY+H, padX:padX+W] instead of the symmetric
+    # [padY:-padY, padX:-padX]: the latter is the empty slice [0:0] when a pad is 0,
+    # this gives [0:H] (a no-op).
     cropR = slice(padY, padY + H)
     cropC = slice(padX, padX + W)
 
@@ -146,9 +143,7 @@ def fftTranslateImage(image, shift, markInvalid=True):
         translated = np.fft.ifft2(np.fft.fft2(padded) * phase)[cropR, cropC]
 
     # real input -> keep the output real (the phase-ramp IFFT has ~0 imaginary
-    # residual; take magnitude). Mirrors the reference's GPU branch; the reference's
-    # CPU branch had the line-63 NameError (translatedImageGpu undefined) -- fixed
-    # here to np.abs(translated).
+    # residual; take magnitude).
     if not np.issubdtype(image.dtype, np.complexfloating):
         translated = np.abs(translated)
 
@@ -171,8 +166,7 @@ def fftTranslateImage(image, shift, markInvalid=True):
             valid[:, oobC] = False
         translated = np.where(valid, translated, np.nan)
     # markInvalid=False: leave the shifted-out / input-NaN regions as the raw
-    # (zero-filled, possibly ringing) values -- the reference's shipped behaviour,
-    # minus the NaN propagation the zero-fill above fixes.
+    # (zero-filled, possibly ringing) values.
 
     # preserve input dtype (np.fft upcasts complex64 -> complex128, float32 -> complex128)
     return translated.astype(image.dtype)

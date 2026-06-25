@@ -182,7 +182,17 @@ def pairwiseSimilarityTransform(imgA, imgB, maskA=None, maskB=None,
     logPolarA = interp2linear(MA, gx, gy, extrapval=np.nan)
     logPolarB = interp2linear(MB, gx, gy, extrapval=np.nan)
 
-    corrMap, _ = _phaseCorrelationMap(logPolarA, logPolarB)
+    # The log-polar resample leaves an out-of-source NaN border (interp2linear's
+    # extrapval). _phaseCorrelationMap defaults its masks to all-True, so a single
+    # NaN pixel in the border would enter the mean-removal and poison the entire
+    # cross-power -> an all-NaN corrMap -> nanargmax raises "All-NaN slice". Pass
+    # the finite-region masks so it mean-removes over the valid intersection and
+    # zero-fills the border instead. (If the whole map is NaN the intersection is
+    # empty -> crossPower 0 -> corrMap all-zero finite -> degenerate (0,0) peak,
+    # not a crash.)
+    corrMap, _ = _phaseCorrelationMap(logPolarA, logPolarB,
+                                      maskA=np.isfinite(logPolarA),
+                                      maskB=np.isfinite(logPolarB))
     if subpixel:
         truePeak, peakHeight = _peakAndSubpixel(corrMap, upsampleFactor)
     else:

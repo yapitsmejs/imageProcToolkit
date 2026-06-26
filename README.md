@@ -2,7 +2,7 @@
 
 Image-processing toolkit: FFT zero-padding upsampling, MATLAB-style bilinear
 interpolation, atomic sub-pixel image translation, all-pairwise phase-correlation
-shift estimation, amplitude clamping/normalization, and the multi-image
+shift estimation, intensity clamping/normalization, and the multi-image
 co-registration orchestrator.
 
 ## Installation
@@ -31,7 +31,7 @@ from imageProcToolkit.fftUpsample import fourierUpsample
 from imageProcToolkit.interp2 import interp2linear
 from imageProcToolkit.fftTranslate2d import fftTranslate2d
 from imageProcToolkit.getTranslationalShifts import getTranslationalShifts
-from imageProcToolkit.clampAmplitude import clampAmplitude
+from imageProcToolkit.clamp import clamp
 from imageProcToolkit.normalizeArray import normalizeToUint8
 from imageProcToolkit.coTranslate2d import coTranslate2d
 ```
@@ -44,7 +44,7 @@ from imageProcToolkit.coTranslate2d import coTranslate2d
 | `interp2` | MATLAB `interp2(...,'linear')` port (numba fused-kernel backend). |
 | `fftTranslate2d` | Atomic FFT sub-pixel image translation. |
 | `getTranslationalShifts` | All-pairwise phase-correlation shift estimation (co-registration step 4). |
-| `clampAmplitude` | Amplitude dynamic-range clamp (co-registration step 2). |
+| `clamp` | Intensity dynamic-range clamp (10·log10; co-registration step 2). |
 | `normalizeArray` | Per-image amplitude → uint8 normalization (co-registration step 3). |
 | `coTranslate2d` | Multi-image co-registration orchestrator (steps 2-5). |
 

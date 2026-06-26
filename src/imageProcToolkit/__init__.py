@@ -6,7 +6,7 @@ A collection of flat accelerator / utility modules:
 - ``interp2``          — MATLAB ``interp2(...,'linear')`` port (numba fused-kernel backend).
 - ``fftTranslate2d``— atomic FFT sub-pixel image translation.
 - ``getTranslationalShifts`` — all-pairwise phase-correlation shift estimation (co-registration step 4).
-- ``clampAmplitude``   — amplitude dynamic-range clamp (co-registration step 2).
+- ``clamp``   — intensity dynamic-range clamp (10·log10; co-registration step 2).
 - ``normalizeArray``— per-image amplitude -> uint8 normalization (co-registration step 3).
 - ``coTranslate2d``— the multi-image translation co-registration orchestrator (steps 2-5).
 - ``getSimilarityTransform`` — all-pairwise Fourier-Mellin rotation/scale + global similarity (step 4b; 4-DOF generalization of getTranslationalShifts).

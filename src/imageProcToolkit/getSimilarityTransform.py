@@ -3,7 +3,7 @@ from ._phaseCorrelationCore import (
     _phaseCorrelationMap, _quadFit3x3, _peakAndSubpixel, _wraparoundPick)
 from .interp2 import interp2linear
 from . import getTranslationalShifts
-from .clampAmplitude import clampAmplitude
+from .clamp import clamp
 from .normalizeArray import normalizeImagesAmplitude
 from .similarityTransform2d import similarityRotScaleImage
 
@@ -13,7 +13,7 @@ from .similarityTransform2d import similarityRotScaleImage
     a per-image similarity G_i = (theta_i, log s_i, dy_i, dx_i) with **no image as
     ground truth** (zero-mean gauge). This generalizes getTranslationalShifts from the
     2-DOF translation group to the 4-DOF similarity group SIM(2), and runs on the uint8
-    amplitude images from step 3 (estimation only -- writes nothing to disk).
+    (intensity-derived) images from step 3 (estimation only -- writes nothing to disk).
 
     --------------------------------------------------------------------------- #
     Why two stages (decoupled rot/scale, then translation)
@@ -392,8 +392,10 @@ def _getSimilarityTransform_selfcheck():
     s_k = 1.06
     B = similarityRotScaleImage(base, (theta_k, s_k), markInvalid=True)
 
-    # estimation branch: clamp + normalize to uint8 (mirrors coSimilarityTransform2d)
-    u8 = normalizeImagesAmplitude([clampAmplitude(base), clampAmplitude(B)])
+    # estimation branch: amplitude -> intensity (square) -> 10*log10 intensity-dB clamp
+    # -> normalize to uint8 (mirrors coSimilarityTransform2d's arrayScale='amplitude' path;
+    # base/B are real non-negative amplitude-like, so intensity = x**2).
+    u8 = normalizeImagesAmplitude([clamp(base ** 2), clamp(B ** 2)])
     params = getSimilarityTransform(u8, subpixel=True)
 
     # gauge-invariant rot/scale check: params[1]-params[0] == (-theta_k, -log s_k)
@@ -404,7 +406,7 @@ def _getSimilarityTransform_selfcheck():
 
     # end-to-end: applying the recovered similarities to the ORIGINALS must co-register.
     from .similarityTransform2d import similarityTransformImages
-    transformed = similarityTransformImages([base, B], params)
+    transformed = similarityTransformImages([base, B], params, 'amplitude')
     t0, t1 = transformed[0], transformed[1]
     corrMap, _ = _phaseCorrelationMap(
         t0.astype(np.float32), t1.astype(np.float32),

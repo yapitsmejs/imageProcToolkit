@@ -135,14 +135,14 @@ def similarityRotScaleImage(image, params, markInvalid=True):
 # --------------------------------------------------------------------------- #
 # atomic full similarity (rot/scale then translate)
 # --------------------------------------------------------------------------- #
-def similarityTransform2d(image, params, markInvalid=True):
+def similarityTransform2d(image, params, arrayScale, markInvalid=True):
     """Apply the full 4-DOF similarity G = (theta, s, dy, dx) to `image`: rotate by
     theta, uniformly scale by s, then translate by (dy, dx).
 
     Composition is rot/scale FIRST, then translate (see the module docstring): this
     matches G_i = T(t'_i) compose G_i^{rs} = (theta_i, s_i, t'_i) where t'_i is the
     translation estimated by getSimilarityTransform's stage 2 on the de-rotated/
-    de-scaled image. Applying similarityTransform2d(image_i, G_i) therefore
+    de-scaled image. Applying similarityTransform2d(image_i, G_i, arrayScale) therefore
     co-registers the set.
 
     Args:
@@ -150,6 +150,10 @@ def similarityTransform2d(image, params, markInvalid=True):
             axis 1 = azimuth/x). May contain NaN borders.
         params: (theta, s, dy, dx) -- theta in radians, s > 0, (dy, dx) = (rows/y,
             cols/x) the translation.
+        arrayScale: required, the unit of `image` -- ``'amplitude'`` or ``'intensity'``.
+            A similarity warp is linear and unit-preserving, so this triggers NO numeric
+            conversion; it is forwarded to the translate stage (fftTranslate2d) as the
+            input-unit contract (see fftTranslate2d's docstring).
         markInvalid: forwarded to both stages (default True). NaN-fills the warp's
             out-of-source border and the translate's shifted-out border; the NaN border
             grows on every look (intended, cleaner for interferometry).
@@ -159,6 +163,8 @@ def similarityTransform2d(image, params, markInvalid=True):
         preserved through both stages), real in -> real out (fftTranslate2d's
         np.abs sub-pixel caveat carries over).
     """
+    if arrayScale not in ('amplitude', 'intensity'):
+        raise ValueError(f"arrayScale must be 'amplitude' or 'intensity', got {arrayScale!r}")
     image = np.asarray(image)
     theta = float(params[0])
     s = float(params[1])
@@ -169,19 +175,23 @@ def similarityTransform2d(image, params, markInvalid=True):
     # The warp's NaN border becomes the translate stage's input-NaN border, which
     # fftTranslate2d zero-fills before its FFT and re-marks with markInvalid.
     warped = similarityRotScaleImage(image, (theta, s), markInvalid)
-    out = fftTranslate2d(warped, (dy, dx), markInvalid)
+    out = fftTranslate2d(warped, (dy, dx), arrayScale, markInvalid)
     return out.astype(image.dtype)
 
 
 # --------------------------------------------------------------------------- #
 # batched similarity (step 5)
 # --------------------------------------------------------------------------- #
-def similarityTransformImages(images, params, markInvalid=True):
+def similarityTransformImages(images, params, arrayScale, markInvalid=True):
     """Apply each per-image similarity (batched step 5). `params` is the (N, 4) array
     returned by getSimilarityTransform (columns (theta, log s, dy, dx) -- NB the scale
     column is exp'd here before application, row order = input order). Delegates to the
-    atomic similarityTransform2d; markInvalid=True (default) NaN-fills the borders.
+    atomic similarityTransform2d; `arrayScale` is the input-unit contract forwarded to
+    each call (a similarity warp is unit-preserving). markInvalid=True (default)
+    NaN-fills the borders.
     """
+    if arrayScale not in ('amplitude', 'intensity'):
+        raise ValueError(f"arrayScale must be 'amplitude' or 'intensity', got {arrayScale!r}")
     images = list(images)
     params = np.asarray(params, dtype=np.float64)
     if len(images) != params.shape[0]:
@@ -189,7 +199,7 @@ def similarityTransformImages(images, params, markInvalid=True):
             f"{len(images)} images but params has {params.shape[0]} rows")
     return [similarityTransform2d(
                 img, (float(params[i, 0]), float(np.exp(params[i, 1])),
-                      float(params[i, 2]), float(params[i, 3])), markInvalid)
+                      float(params[i, 2]), float(params[i, 3])), arrayScale, markInvalid)
             for i, img in enumerate(images)]
 
 
@@ -234,11 +244,11 @@ def _similarityTransform2d_selfcheck():
 
     # dtype preservation
     cplx = (rng.standard_normal((16, 16)) + 1j * rng.standard_normal((16, 16))).astype(np.complex64)
-    cplx_out = similarityTransform2d(cplx, (0.05, 1.02, 0.5, -0.5))
+    cplx_out = similarityTransform2d(cplx, (0.05, 1.02, 0.5, -0.5), 'amplitude')
     dtype_cplx = cplx_out.dtype == np.complex64
     shape_cplx = cplx_out.shape == cplx.shape
 
-    real_out = similarityTransform2d(base, (0.05, 1.02, 1.0, -1.0))
+    real_out = similarityTransform2d(base, (0.05, 1.02, 1.0, -1.0), 'amplitude')
     dtype_real = real_out.dtype == np.float32
     shape_real = real_out.shape == base.shape
 

@@ -2,8 +2,22 @@ import numpy as np
 from . import getSimilarityTransform
 from . import getTranslationalShifts
 from . import similarityTransform2d
-from . import clampAmplitude as clamp
+from .clamp import clamp
 from . import normalizeArray as norm
+
+
+def _toIntensity(array, arrayScale):
+    """Resolve an input array to a real float32 intensity array per `arrayScale`.
+
+    complex -> |z|**2 (intensity, phase discarded); real + ``'amplitude'`` -> x**2
+    (square the amplitude into intensity); real + ``'intensity'`` -> x (already
+    intensity, passthrough). This is the amplitude -> intensity conversion the
+    orchestrator owes the unit-unaware `clamp` (which only speaks intensity)."""
+    if np.iscomplexobj(array):
+        a = np.abs(array).astype(np.float32)
+        return a * a
+    x = np.asarray(array, dtype=np.float32)
+    return x * x if arrayScale == 'amplitude' else x
 
 '''
     Orchestrator for multi-image co-registration under a 4-DOF similarity per image
@@ -14,31 +28,37 @@ from . import normalizeArray as norm
     estimator recovers rotation; if they are already aligned, theta_i ~ 0 and s_i ~ 1
     and this reduces to coTranslate2d) by running steps 2-3-4-5:
 
-        step 2  clampAmplitude          (complex -> amplitude, or real passthrough;
-                                              dB-histogram-mode dynamic-range clamp)
-        step 3  normalizeArray       (clamped amplitude -> per-image uint8)
-        step 4  getSimilarityTransform        (stage 1: all-pairwise Fourier-Mellin
+        step 2  toIntensity + clamp      (per `arrayScale`: complex -> |z|^2, real
+                                              amplitude -> x^2, real intensity -> x;
+                                              then 10*log10 intensity-dB dynamic-range
+                                              clamp)
+        step 3  normalizeArray           (clamped intensity -> per-image uint8)
+        step 4  getSimilarityTransform   (stage 1: all-pairwise Fourier-Mellin
                                               rot/scale on the uint8 magnitude spectra
                                               -> zero-mean-gauge per-image (theta, log s);
                                               stage 2: de-rotate + de-scale each clamped
-                                              amplitude, re-normalize, then reuse
+                                              intensity, re-normalize, then reuse
                                               getTranslationalShifts for (dy, dx))
-        step 5  similarityTransformImages     (apply each per-image similarity to the
+        step 5  similarityTransformImages (apply each per-image similarity to the
                                               **original input** via bilinear rot/scale
-                                              warp + FFT phase-ramp translate)
+                                              warp + FFT phase-ramp translate,
+                                              unit-preserving)
 
     As in coTranslate2d, the uint8 branch (steps 2-3 + the stage-1 spectra) is
     estimation-only: phase correlation / Fourier-Mellin are brightness-invariant, so the
-    similarity is estimated on the uint8 / clamped amplitude and applied (step 5) to the
+    similarity is estimated on the uint8 / clamped intensity and applied (step 5) to the
     **original inputs** -- the "key branch": complex in -> complex out (phase preserved
     for interferometry), real in -> real out. The clamp does not discard phase from the
-    output.
+    output. The required `arrayScale` declares the inputs' unit; the estimation branch
+    resolves it to intensity (`_toIntensity`) before the unit-unaware clamp, and the
+    application branch forwards it to similarityTransformImages as the input-unit
+    contract (a similarity warp is unit-preserving).
 
     Masks: complex/real inputs may have NaN borders, and normalizeToUint8 maps NaN -> 0
     sentinel (so the border is undetectable in the uint8). The valid-pixel mask for
     stage 1 is therefore derived from np.isfinite of the **original input** (before
     clamp), not from the uint8. For stage 2 the mask is re-derived from np.isfinite of
-    the de-warped clamped amplitude (the warp marks its out-of-source border NaN).
+    the de-warped clamped intensity (the warp marks its out-of-source border NaN).
 
     The decoupled two-stage solve and the gauge (stage-1 zero-mean on (theta, log s),
     stage-2 zero-mean on (dy, dx); 4 gauge DOF fixed, no image is ground truth) are
@@ -54,7 +74,7 @@ from . import normalizeArray as norm
 # --------------------------------------------------------------------------- #
 # orchestrator
 # --------------------------------------------------------------------------- #
-def coSimilarityTransform2d(images, masks=None, subpixel=True, upsampleFactor=1,
+def coSimilarityTransform2d(images, arrayScale, masks=None, subpixel=True, upsampleFactor=1,
                                 highPass=True, nRho=None, nPhi=None, rmin=1.0):
     """Co-register N complex-or-real images under a 4-DOF similarity per image
     (steps 2-3-4-5; rotation need not be pre-aligned).
@@ -63,6 +83,11 @@ def coSimilarityTransform2d(images, masks=None, subpixel=True, upsampleFactor=1,
         images: list of N complex or real images. Need not be rotation-aligned (the
                 similarity estimator recovers rotation). May contain NaN borders; these
                 are masked for estimation (derived from the input, not the uint8).
+        arrayScale: required, the unit of the input images -- ``'amplitude'`` or
+                ``'intensity'``. Drives the step-2 conversion to intensity
+                (complex -> |z|^2, real amplitude -> x^2, real intensity -> passthrough)
+                and is forwarded to step 5 as the input-unit contract (a similarity warp
+                is unit-preserving).
         masks:  optional list of N boolean valid-pixel masks. If None, derived from
                 np.isfinite of each input. NB: masks must come from the input, NOT the
                 uint8 -- normalizeToUint8 maps NaN -> 0 sentinel, so NaN is undetectable
@@ -82,28 +107,30 @@ def coSimilarityTransform2d(images, masks=None, subpixel=True, upsampleFactor=1,
         diag:        {'rotScale': checkSimilarityRotScaleResiduals dict,
                       'translation': checkTranslationalShiftResiduals dict}.
     """
+    if arrayScale not in ('amplitude', 'intensity'):
+        raise ValueError(f"arrayScale must be 'amplitude' or 'intensity', got {arrayScale!r}")
     images = [np.asarray(img) for img in images]
     n = len(images)
 
     if masks is None:
         masks = [np.isfinite(img) for img in images]
 
-    # steps 2 & 3: clamp (complex -> amplitude, or real passthrough) -> per-image uint8.
-    # This is the estimation branch; it does NOT feed step 5.
-    clamped = [clamp.clampAmplitude(img) for img in images]
+    # steps 2 & 3: resolve to intensity per arrayScale -> 10*log10 intensity-dB clamp ->
+    # per-image uint8. This is the estimation branch; it does NOT feed step 5.
+    clamped = [clamp(_toIntensity(img, arrayScale)) for img in images]
     u8 = norm.normalizeImagesAmplitude(clamped)
 
     # stage 1: all-pairwise Fourier-Mellin rotation+scale on the uint8 magnitude spectra
     # (with the input-derived masks) -> zero-mean-gauge per-image (theta, log s). Call the
     # components (not getSimilarityTransform.getSimilarityTransform) so the diag dict is
-    # returned alongside p_rs and so stage 2 de-warps the clamped amplitude (not the uint8).
+    # returned alongside p_rs and so stage 2 de-warps the clamped intensity (not the uint8).
     pw_rs = getSimilarityTransform.allPairwiseSimilarityTransforms(
                 u8, masks=masks, subpixel=subpixel, upsampleFactor=upsampleFactor,
                 highPass=highPass, nRho=nRho, nPhi=nPhi, rmin=rmin)
     p_rs = getSimilarityTransform.solveGlobalSimilarityRotScale(pw_rs, n)
     diag_rs = getSimilarityTransform.checkSimilarityRotScaleResiduals(pw_rs, p_rs)
 
-    # stage 2: de-rotate + de-scale the **clamped amplitude** (float32) by (theta_i, s_i),
+    # stage 2: de-rotate + de-scale the **clamped intensity** (float32) by (theta_i, s_i),
     # re-derive masks from np.isfinite of the de-warped float (warp out-of-source -> NaN),
     # and re-normalize to uint8. The de-warp physically removes the rot/scale, leaving a
     # pure-translation residual that getTranslationalShifts handles exactly.
@@ -120,9 +147,10 @@ def coSimilarityTransform2d(images, masks=None, subpixel=True, upsampleFactor=1,
     diag_t = getTranslationalShifts.checkTranslationalShiftResiduals(pw_t, t)
 
     # compose (N, 4) = (theta, log s, dy, dx) and apply to the ORIGINAL inputs (step 5):
-    # complex in -> complex out (phase preserved), real in -> real out.
+    # complex in -> complex out (phase preserved), real in -> real out. arrayScale is the
+    # input-unit contract (a similarity warp is unit-preserving).
     params = np.concatenate([p_rs, t], axis=1)
-    transformed = similarityTransform2d.similarityTransformImages(images, params)
+    transformed = similarityTransform2d.similarityTransformImages(images, params, arrayScale)
 
     diag = {'rotScale': diag_rs, 'translation': diag_t}
     print(f"[coSimilarityTransform2d] rot/scale: {diag_rs['nPairs']} pairs | "
@@ -140,7 +168,7 @@ def _coSimilarityTransform2d_selfcheck():
     """End-to-end: co-register two images related by a known full similarity
     (rotation + scale + translation) and confirm the result aligns.
 
-    B = similarityTransform2d(A, (theta_k, s_k, dy_k, dx_k)). coSimilarityTransform2d
+    B = similarityTransform2d(A, (theta_k, s_k, dy_k, dx_k), arrayScale). coSimilarityTransform2d
     returns per-image similarities under a zero-mean gauge; applying them to both ORIGINAL
     images must co-register the pair (phase-correlation peak at ~0). Also checks the
     recovered params shape and the nested diag dict. The pattern is the same broadband
@@ -163,9 +191,9 @@ def _coSimilarityTransform2d_selfcheck():
     s_k = 1.05
     dy_k, dx_k = 3.0, -2.0          # ~integer so the real-input translate is faithful
     B = similarityTransform2d.similarityTransform2d(
-            base, (theta_k, s_k, dy_k, dx_k), markInvalid=True)
+            base, (theta_k, s_k, dy_k, dx_k), 'amplitude', markInvalid=True)
 
-    transformed, params, diag = coSimilarityTransform2d([base, B])
+    transformed, params, diag = coSimilarityTransform2d([base, B], 'amplitude')
 
     shape_ok = params.shape == (2, 4) and len(transformed) == 2
     diag_ok = ('rotScale' in diag and 'translation' in diag

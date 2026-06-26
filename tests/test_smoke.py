@@ -11,7 +11,7 @@ import imageProcToolkit
 from imageProcToolkit.fftUpsample import fourierUpsample
 from imageProcToolkit.interp2 import interp2linear
 from imageProcToolkit.fftTranslate2d import fftTranslate2d
-from imageProcToolkit.clampAmplitude import clampAmplitude
+from imageProcToolkit.clamp import clamp
 from imageProcToolkit.normalizeArray import normalizeToUint8
 from imageProcToolkit.getTranslationalShifts import getTranslationalShifts
 from imageProcToolkit.coTranslate2d import coTranslate2d
@@ -27,7 +27,7 @@ def test_version():
 
 def test_all_submodules_importable():
     # Relative imports inside the package must resolve.
-    import imageProcToolkit.clampAmplitude  # noqa: F401
+    import imageProcToolkit.clamp  # noqa: F401
     import imageProcToolkit.coTranslate2d    # noqa: F401
     import imageProcToolkit.fftTranslate2d    # noqa: F401
     import imageProcToolkit.fftUpsample          # noqa: F401
@@ -43,7 +43,8 @@ def test_all_submodules_importable():
 def test_clamp_then_normalize():
     rng = np.random.default_rng(0)
     img = rng.standard_normal((16, 16)) + 1j * rng.standard_normal((16, 16))
-    clamped = clampAmplitude(img)
+    # clamp operates on real intensity: complex -> |z|^2 first.
+    clamped = clamp(np.abs(img) ** 2)
     assert clamped.shape == img.shape
     assert clamped.dtype == np.float32
     normed, vmin, vmax = normalizeToUint8(clamped)
@@ -61,7 +62,7 @@ def test_fourierUpsample_shape():
 def test_fftTranslateImage_shape():
     img = np.zeros((10, 10), dtype=np.float32)
     img[5, 5] = 1.0
-    out = fftTranslate2d(img, shift=(1.5, -0.5))
+    out = fftTranslate2d(img, shift=(1.5, -0.5), arrayScale='intensity')
     assert out.shape == img.shape
 
 
@@ -100,11 +101,11 @@ def test_similarityTransformImage_shape_dtype():
     # atomic warp: shape preserved, dtype preserved for real and complex input.
     img = np.zeros((16, 16), dtype=np.float32)
     img[8, 8] = 1.0
-    out = similarityTransform2d(img, (0.1, 1.05, 1.0, -0.5))
+    out = similarityTransform2d(img, (0.1, 1.05, 1.0, -0.5), arrayScale='intensity')
     assert out.shape == img.shape
     assert out.dtype == np.float32
     cplx = (np.zeros((16, 16)) + 1j * np.zeros((16, 16))).astype(np.complex64)
-    cplx_out = similarityTransform2d(cplx, (0.05, 1.02, 0.5, 0.5))
+    cplx_out = similarityTransform2d(cplx, (0.05, 1.02, 0.5, 0.5), arrayScale='amplitude')
     assert cplx_out.dtype == np.complex64
 
 
@@ -113,7 +114,7 @@ def test_coSimilarityTransformImages_callable():
     assert callable(coSimilarityTransform2d)
     rng = np.random.default_rng(0)
     imgs = [rng.standard_normal((32, 32)).astype(np.float32) for _ in range(2)]
-    transformed, params, diag = coSimilarityTransform2d(imgs)
+    transformed, params, diag = coSimilarityTransform2d(imgs, arrayScale='amplitude')
     assert params.shape == (2, 4)
     assert len(transformed) == 2
     assert 'rotScale' in diag and 'translation' in diag

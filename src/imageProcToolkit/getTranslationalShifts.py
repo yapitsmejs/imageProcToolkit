@@ -12,7 +12,7 @@ from ._phaseCorrelationCore import (
     Estimate the relative translational shift between every image pair via phase
     correlation, then solve a global least-squares for a per-image shift vector
     (dy_i, dx_i) with **no image as ground truth** (zero-mean gauge). This runs on the
-    uint8 amplitude images from step 3 (estimation only -- writes nothing to disk).
+    uint8 (intensity-derived) images from step 3 (estimation only -- writes nothing to disk).
 
     --------------------------------------------------------------------------- #
     Shift convention

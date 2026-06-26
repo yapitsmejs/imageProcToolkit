@@ -65,12 +65,12 @@ except ImportError:
 # --------------------------------------------------------------------------- #
 # phase-ramp translation
 # --------------------------------------------------------------------------- #
-def fftTranslate2d(image, shift, markInvalid=True):
+def fftTranslate2d(image, shift, arrayScale, markInvalid=True):
     """Translate `image` by `shift = (dy, dx)` via an FFT phase-ramp with pad-and-crop
     anti-wraparound, preserving the input dtype (complex64 in -> complex64 out).
 
     The phase ramp exp(-2j*pi*(fx*dx + fy*dy)) gives output[n] = input[n - (dy, dx)]
-    -- content moves by (dy, dx) -- so fftTranslate2d(img, s) applies exactly the
+    -- content moves by (dy, dx) -- so fftTranslate2d(img, s, arrayScale) applies exactly the
     shift `s` (the convention getTranslationalShifts returns: applying t_i to image_i co-registers
     the set under t_j - t_i = s_ij).
 
@@ -88,6 +88,15 @@ def fftTranslate2d(image, shift, markInvalid=True):
                borders (e.g. from a prior rotation step); these are zero-filled before the FFT.
         shift: (dy, dx) = (shiftY, shiftX); dy along rows (range/y), dx along cols
                (azimuth/x).
+        arrayScale: required, the unit of `image` -- ``'amplitude'`` or ``'intensity'``.
+            Translation is a *linear, unit-preserving* operation (a phase ramp in the
+            FFT domain commutes with any per-pixel brightness mapping), so this argument
+            triggers NO numeric conversion here: amplitude in -> amplitude out, intensity
+            in -> intensity out, complex in -> complex out. It is required purely as the
+            input-unit contract so the co-registration pipeline stays consistent end to
+            end (the orchestrators convert amplitude -> intensity for the *estimation*
+            branch upstream of this call; this *application* step 5 translates the
+            **original** input and must preserve its declared unit).
         markInvalid: if True (default), set the output to NaN where the source has no
             real sample -- i.e. where the source index (r - dy, c - dx) is out of
             bounds OR the source pixel was NaN in the input -- so neither the fake
@@ -101,6 +110,8 @@ def fftTranslate2d(image, shift, markInvalid=True):
     Returns:
         (H, W) array of the same dtype as `image`, translated by (dy, dx).
     """
+    if arrayScale not in ('amplitude', 'intensity'):
+        raise ValueError(f"arrayScale must be 'amplitude' or 'intensity', got {arrayScale!r}")
     image = np.asarray(image)
     H, W = image.shape
     dy = float(shift[0])

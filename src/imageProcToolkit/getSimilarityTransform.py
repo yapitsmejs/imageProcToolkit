@@ -4,7 +4,7 @@ from ._phaseCorrelationCore import (
 from .interp2 import interp2linear
 from . import getTranslationalShifts
 from .clamp import clamp
-from .normalizeArray import normalizeImagesAmplitude
+from .normalizeArray import normalizeToUint8
 from .similarityTransform2d import similarityRotScaleImage
 
 '''
@@ -338,7 +338,7 @@ def getSimilarityTransform(images, masks=None, subpixel=True, upsampleFactor=1,
                         images[i], (float(p_rs[i, 0]), float(np.exp(p_rs[i, 1]))))
                   for i in range(n)]
     dewarped_masks = [np.isfinite(d) for d in dewarped_f]
-    dewarped_u8 = normalizeImagesAmplitude(dewarped_f)
+    dewarped_u8 = [normalizeToUint8(a) for a in dewarped_f]
 
     pw_t = getTranslationalShifts.allPairwiseTranslationalShifts(
                 dewarped_u8, masks=dewarped_masks, subpixel=subpixel,
@@ -395,7 +395,7 @@ def _getSimilarityTransform_selfcheck():
     # estimation branch: amplitude -> intensity (square) -> 10*log10 intensity-dB clamp
     # -> normalize to uint8 (mirrors coSimilarityTransform2d's arrayScale='amplitude' path;
     # base/B are real non-negative amplitude-like, so intensity = x**2).
-    u8 = normalizeImagesAmplitude([clamp(base ** 2), clamp(B ** 2)])
+    u8 = [normalizeToUint8(a) for a in [clamp(base ** 2), clamp(B ** 2)]]
     params = getSimilarityTransform(u8, subpixel=True)
 
     # gauge-invariant rot/scale check: params[1]-params[0] == (-theta_k, -log s_k)

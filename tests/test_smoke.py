@@ -47,7 +47,7 @@ def test_clamp_then_normalize():
     clamped = clamp(np.abs(img) ** 2)
     assert clamped.shape == img.shape
     assert clamped.dtype == np.float32
-    normed, vmin, vmax = normalizeToUint8(clamped)
+    normed = normalizeToUint8(clamped)
     assert normed.dtype == np.uint8
     assert normed.shape == img.shape
 

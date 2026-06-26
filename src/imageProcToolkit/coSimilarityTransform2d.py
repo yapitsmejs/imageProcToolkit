@@ -118,7 +118,7 @@ def coSimilarityTransform2d(images, arrayScale, masks=None, subpixel=True, upsam
     # steps 2 & 3: resolve to intensity per arrayScale -> 10*log10 intensity-dB clamp ->
     # per-image uint8. This is the estimation branch; it does NOT feed step 5.
     clamped = [clamp(_toIntensity(img, arrayScale)) for img in images]
-    u8 = norm.normalizeImagesAmplitude(np.log10(clamped))
+    u8 = [norm.normalizeToUint8(a) for a in np.log10(clamped)]
 
     # stage 1: all-pairwise Fourier-Mellin rotation+scale on the uint8 magnitude spectra
     # (with the input-derived masks) -> zero-mean-gauge per-image (theta, log s). Call the
@@ -138,7 +138,7 @@ def coSimilarityTransform2d(images, arrayScale, masks=None, subpixel=True, upsam
                         clamped[i], (float(p_rs[i, 0]), float(np.exp(p_rs[i, 1]))))
                   for i in range(n)]
     dewarped_masks = [np.isfinite(d) for d in dewarped_f]
-    dewarped_u8 = norm.normalizeImagesAmplitude(dewarped_f)
+    dewarped_u8 = [norm.normalizeToUint8(a) for a in dewarped_f]
 
     pw_t = getTranslationalShifts.allPairwiseTranslationalShifts(
                 dewarped_u8, masks=dewarped_masks, subpixel=subpixel,

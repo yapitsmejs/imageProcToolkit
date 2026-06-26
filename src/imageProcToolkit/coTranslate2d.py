@@ -137,7 +137,7 @@ def coTranslate2d(images, arrayScale, masks=None):
     # steps 2 & 3: resolve to intensity per arrayScale -> 10*log10 intensity-dB clamp
     # -> per-image uint8. This is the estimation branch; it does NOT feed step 5.
     clamped = [clamp(_toIntensity(img, arrayScale)) for img in images]
-    u8 = norm.normalizeImagesAmplitude(np.log10(clamped))
+    u8 = [norm.normalizeToUint8(a) for a in np.log10(clamped)]
 
     # step 4: all-pairwise phase-correlation shifts on the uint8 (with the
     # input-derived masks) -> zero-mean-gauge per-image shifts. Call the components

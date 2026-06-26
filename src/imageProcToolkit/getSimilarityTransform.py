@@ -3,9 +3,9 @@ from ._phaseCorrelationCore import (
     _phaseCorrelationMap, _quadFit3x3, _peakAndSubpixel, _wraparoundPick)
 from .interp2 import interp2linear
 from . import getTranslationalShifts
-from .clampImageAmplitude import clampImageAmplitude
-from .normalizeImageAmplitude import normalizeImagesAmplitude
-from .similarityTransformImage import similarityRotScaleImage
+from .clampAmplitude import clampAmplitude
+from .normalizeArray import normalizeImagesAmplitude
+from .similarityTransform2d import similarityRotScaleImage
 
 '''
     Estimate the relative similarity transform (rotation theta + uniform scale s, then
@@ -36,7 +36,7 @@ from .similarityTransformImage import similarityRotScaleImage
     the rot/scale) and then REUSES getTranslationalShifts verbatim on the de-warped uint8
     for (dy_i, dx_i), where the residual is again exactly additive. The final per-image
     similarity is G_i = (theta_i, s_i, t'_i) with t'_i from stage 2; applying rot/scale
-    then translation (see similarityTransformImage) is the correct composition.
+    then translation (see similarityTransform2d) is the correct composition.
 
     Gauge: stage-1 zero-mean fixes the 2 rot/scale gauge DOF; stage-2 zero-mean fixes the
     2 translation gauge DOF. All 4 gauge DOF fixed, no image is ground truth. Dominant
@@ -392,8 +392,8 @@ def _getSimilarityTransform_selfcheck():
     s_k = 1.06
     B = similarityRotScaleImage(base, (theta_k, s_k), markInvalid=True)
 
-    # estimation branch: clamp + normalize to uint8 (mirrors coSimilarityTransformImages)
-    u8 = normalizeImagesAmplitude([clampImageAmplitude(base), clampImageAmplitude(B)])
+    # estimation branch: clamp + normalize to uint8 (mirrors coSimilarityTransform2d)
+    u8 = normalizeImagesAmplitude([clampAmplitude(base), clampAmplitude(B)])
     params = getSimilarityTransform(u8, subpixel=True)
 
     # gauge-invariant rot/scale check: params[1]-params[0] == (-theta_k, -log s_k)
@@ -403,7 +403,7 @@ def _getSimilarityTransform_selfcheck():
     scale_ok = np.isclose(d_logs, -np.log(s_k), atol=0.03)
 
     # end-to-end: applying the recovered similarities to the ORIGINALS must co-register.
-    from .similarityTransformImage import similarityTransformImages
+    from .similarityTransform2d import similarityTransformImages
     transformed = similarityTransformImages([base, B], params)
     t0, t1 = transformed[0], transformed[1]
     corrMap, _ = _phaseCorrelationMap(

@@ -1,9 +1,9 @@
 import numpy as np
 from .interp2 import interp2linear
-from .fftTranslateImage import fftTranslateImage
+from .fftTranslate2d import fftTranslate2d
 
 # cupy is an optional GPU fast-path. Only the **translation** stage of a similarity
-# transform can use it (via fftTranslateImage's own guarded switch); the rotation+scale
+# transform can use it (via fftTranslate2d's own guarded switch); the rotation+scale
 # warp is a bilinear resample run through interp2 (numba, CPU) -- there is no cupy
 # bilinear-warp path in this toolkit, so similarityRotScaleImage never dispatches to
 # cupy. The gate is imported for parity with the rest of the package and so a future
@@ -21,7 +21,7 @@ except ImportError:
 '''
     Apply a 4-DOF similarity transform G = (theta, s, dy, dx) to an image: rotation by
     theta (radians), uniform scale by s, then translation (dy, dx) = (rows/y, cols/x).
-    Atomic + batched, mirroring fftTranslateImage.py.
+    Atomic + batched, mirroring fftTranslate2d.py.
 
     --------------------------------------------------------------------------- #
     Convention
@@ -39,10 +39,10 @@ except ImportError:
 
     which is exactly `image((1/s) R(-theta) (x - t))`. The rot/scale stage implements
     the t = 0 half via a bilinear inverse-map warp (interp2linear); the translate stage
-    appends t via fftTranslateImage's phase ramp (output[n] = input[n - (dy, dx)]).
+    appends t via fftTranslate2d's phase ramp (output[n] = input[n - (dy, dx)]).
     Composing rot/scale FIRST then translate gives
 
-        out(x) = fftTranslateImage(out_rs, t)(x) = out_rs(x - t)
+        out(x) = fftTranslate2d(out_rs, t)(x) = out_rs(x - t)
                = image((1/s) R(-theta) (x - t))           -- the full similarity
 
     i.e. G_i = T(t'_i) compose G_i^{rs} = (theta_i, s_i, t'_i), where t'_i is the
@@ -51,21 +51,21 @@ except ImportError:
     - t) -- the translation not rotated into the source frame -- so the order matters.
 
     --------------------------------------------------------------------------- #
-    Dtype + NaN handling (carried over from fftTranslateImage)
+    Dtype + NaN handling (carried over from fftTranslate2d)
 
     complex in -> complex out (phase preserved through BOTH the bilinear warp, which
     keeps complex64, and the phase-ramp translate); real in -> real out. interp2linear
     preserves the input dtype (float32 weights never upcast a complex64 gather), and
-    fftTranslateImage casts back with .astype(image.dtype) at its return.
+    fftTranslate2d casts back with .astype(image.dtype) at its return.
 
     NaN borders grow on every look, as in the rest of the pipeline: the warp marks
-    out-of-source pixels NaN (interp2 extrapval=NaN); fftTranslateImage zero-fills input
+    out-of-source pixels NaN (interp2 extrapval=NaN); fftTranslate2d zero-fills input
     NaN before its FFT (an NaN anywhere in fft2 poisons the whole array) and, with
     markInvalid=True (default), NaN-fills the shifted-out border. So a similarity
     transform of an image with a NaN border grows that border -- the intended, cleaner
     behaviour for interferometry.
 
-    Real-input sub-pixel caveat (from fftTranslateImage, carried over): the translate
+    Real-input sub-pixel caveat (from fftTranslate2d, carried over): the translate
     stage takes np.abs of the phase-ramp IFFT for real input, faithful for ~integer
     shifts with minor distortion for sub-pixel real translations; the complex branch
     (the interferometry case) has no such fold. Radio calibration is out of scope.
@@ -80,7 +80,7 @@ def similarityRotScaleImage(image, params, markInvalid=True):
     warp, output(x) = image((1/s) R(-theta) x) with x relative to the image centre.
 
     This is the rot/scale half of the similarity (translation 0); the full similarity
-    is similarityTransformImage (this stage followed by fftTranslateImage).
+    is similarityTransform2d (this stage followed by fftTranslate2d).
 
     Args:
         image: (H, W) complex or real array. NaNs propagate through the bilinear
@@ -91,7 +91,7 @@ def similarityRotScaleImage(image, params, markInvalid=True):
             caller can pass the 4-vector and only the rot/scale is applied.)
         markInvalid: if True (default), out-of-source pixels are NaN (interp2
             extrapval=NaN); if False, they are zero-filled (extrapval=0), mirroring
-            fftTranslateImage's markInvalid=False shipped behaviour.
+            fftTranslate2d's markInvalid=False shipped behaviour.
 
     Returns:
         (H, W) array of the same dtype as `image`, rotated by theta and scaled by s
@@ -135,14 +135,14 @@ def similarityRotScaleImage(image, params, markInvalid=True):
 # --------------------------------------------------------------------------- #
 # atomic full similarity (rot/scale then translate)
 # --------------------------------------------------------------------------- #
-def similarityTransformImage(image, params, markInvalid=True):
+def similarityTransform2d(image, params, markInvalid=True):
     """Apply the full 4-DOF similarity G = (theta, s, dy, dx) to `image`: rotate by
     theta, uniformly scale by s, then translate by (dy, dx).
 
     Composition is rot/scale FIRST, then translate (see the module docstring): this
     matches G_i = T(t'_i) compose G_i^{rs} = (theta_i, s_i, t'_i) where t'_i is the
     translation estimated by getSimilarityTransform's stage 2 on the de-rotated/
-    de-scaled image. Applying similarityTransformImage(image_i, G_i) therefore
+    de-scaled image. Applying similarityTransform2d(image_i, G_i) therefore
     co-registers the set.
 
     Args:
@@ -156,7 +156,7 @@ def similarityTransformImage(image, params, markInvalid=True):
 
     Returns:
         (H, W) array of the same dtype as `image`: complex in -> complex out (phase
-        preserved through both stages), real in -> real out (fftTranslateImage's
+        preserved through both stages), real in -> real out (fftTranslate2d's
         np.abs sub-pixel caveat carries over).
     """
     image = np.asarray(image)
@@ -167,9 +167,9 @@ def similarityTransformImage(image, params, markInvalid=True):
 
     # rot/scale first (inverse-map bilinear warp), then translate (FFT phase ramp).
     # The warp's NaN border becomes the translate stage's input-NaN border, which
-    # fftTranslateImage zero-fills before its FFT and re-marks with markInvalid.
+    # fftTranslate2d zero-fills before its FFT and re-marks with markInvalid.
     warped = similarityRotScaleImage(image, (theta, s), markInvalid)
-    out = fftTranslateImage(warped, (dy, dx), markInvalid)
+    out = fftTranslate2d(warped, (dy, dx), markInvalid)
     return out.astype(image.dtype)
 
 
@@ -180,14 +180,14 @@ def similarityTransformImages(images, params, markInvalid=True):
     """Apply each per-image similarity (batched step 5). `params` is the (N, 4) array
     returned by getSimilarityTransform (columns (theta, log s, dy, dx) -- NB the scale
     column is exp'd here before application, row order = input order). Delegates to the
-    atomic similarityTransformImage; markInvalid=True (default) NaN-fills the borders.
+    atomic similarityTransform2d; markInvalid=True (default) NaN-fills the borders.
     """
     images = list(images)
     params = np.asarray(params, dtype=np.float64)
     if len(images) != params.shape[0]:
         raise ValueError(
             f"{len(images)} images but params has {params.shape[0]} rows")
-    return [similarityTransformImage(
+    return [similarityTransform2d(
                 img, (float(params[i, 0]), float(np.exp(params[i, 1])),
                       float(params[i, 2]), float(params[i, 3])), markInvalid)
             for i, img in enumerate(images)]
@@ -196,7 +196,7 @@ def similarityTransformImages(images, params, markInvalid=True):
 # --------------------------------------------------------------------------- #
 # self-check: rot/scale round-trip + dtype preservation
 # --------------------------------------------------------------------------- #
-def _similarityTransformImage_selfcheck():
+def _similarityTransform2d_selfcheck():
     """Round-trip a rotation+scale: apply (theta, s, 0, 0) then (-theta, 1/s, 0, 0)
     and assert the finite (non-border) region matches the original. The rot/scale
     subgroup is abelian so its inverse is trivial (-theta, 1/s); this validates the
@@ -234,16 +234,16 @@ def _similarityTransformImage_selfcheck():
 
     # dtype preservation
     cplx = (rng.standard_normal((16, 16)) + 1j * rng.standard_normal((16, 16))).astype(np.complex64)
-    cplx_out = similarityTransformImage(cplx, (0.05, 1.02, 0.5, -0.5))
+    cplx_out = similarityTransform2d(cplx, (0.05, 1.02, 0.5, -0.5))
     dtype_cplx = cplx_out.dtype == np.complex64
     shape_cplx = cplx_out.shape == cplx.shape
 
-    real_out = similarityTransformImage(base, (0.05, 1.02, 1.0, -1.0))
+    real_out = similarityTransform2d(base, (0.05, 1.02, 1.0, -1.0))
     dtype_real = real_out.dtype == np.float32
     shape_real = real_out.shape == base.shape
 
     ok = bool(vals_close and dtype_cplx and shape_cplx and dtype_real and shape_real)
-    print(f"similarityTransformImage self-check: {'PASS' if ok else 'FAIL'} "
+    print(f"similarityTransform2d self-check: {'PASS' if ok else 'FAIL'} "
           f"(roundtrip_close={vals_close}, max_abs_diff={max_diff:.3e}, "
           f"dtype_cplx={dtype_cplx}, dtype_real={dtype_real}, "
           f"shape_ok={shape_cplx and shape_real})")
@@ -251,4 +251,4 @@ def _similarityTransformImage_selfcheck():
 
 
 if __name__ == "__main__":
-    _similarityTransformImage_selfcheck()
+    _similarityTransform2d_selfcheck()

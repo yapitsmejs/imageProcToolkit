@@ -1,8 +1,8 @@
 import numpy as np
 from . import getTranslationalShifts
-from .fftTranslateImage import fftTranslateImage
-from . import clampImageAmplitude as clamp
-from . import normalizeImageAmplitude as norm
+from .fftTranslate2d import fftTranslate2d
+from . import clampAmplitude as clamp
+from . import normalizeArray as norm
 
 '''
     Orchestrator for the multi-image co-registration pipeline
@@ -10,9 +10,9 @@ from . import normalizeImageAmplitude as norm
     Co-register N images that are **already rotation-aligned** (rotation alignment is
     performed outside this toolkit) by running steps 2-3-4-5:
 
-        step 2  clampImageAmplitude          (complex -> amplitude, or real passthrough;
+        step 2  clampAmplitude          (complex -> amplitude, or real passthrough;
                                               dB-histogram-mode dynamic-range clamp)
-        step 3  normalizeImageAmplitude       (clamped amplitude -> per-image uint8)
+        step 3  normalizeArray       (clamped amplitude -> per-image uint8)
         step 4  getTranslationalShifts        (all-pairwise phase correlation on the
                                               uint8 -> zero-mean-gauge per-image
                                               shifts (N, 2))
@@ -41,7 +41,7 @@ from . import normalizeImageAmplitude as norm
     anaglyph per pair (BEFORE = input pre-shift, AFTER = step-5 co-registered,
     expecting fringes -> gray).
 
-    Note on the real-input sub-pixel caveat (from step 5): fftTranslateImage's
+    Note on the real-input sub-pixel caveat (from step 5): fftTranslate2d's
     real-input branch takes np.abs of the phase-ramp IFFT, which is only faithful for
     integer shifts; sub-pixel translations of a *real* input have minor distortion from
     the np.abs fold. The complex branch (the interferometry case) has no such fold --
@@ -55,22 +55,22 @@ from . import normalizeImageAmplitude as norm
 def fftTranslateImages(images, shifts, markInvalid=True):
     """Translate each image by its per-image shift (batched step 5). `shifts` is the
     (N, 2) array returned by getTranslationalShifts (columns (dy, dx), row order = input order).
-    Delegates to the atomic fftTranslateImage (imageProcToolkit/fftTranslateImage.py),
+    Delegates to the atomic fftTranslate2d (imageProcToolkit/fftTranslate2d.py),
     which holds the phase-ramp + pad-and-crop core; this is just the per-image loop,
-    kept here in the orchestrator module (fftTranslateImage.py is atomic-only). markInvalid=True
+    kept here in the orchestrator module (fftTranslate2d.py is atomic-only). markInvalid=True
     (default) NaN-fills the shifted-out border -- both complex and real hold NaN."""
     images = list(images)
     if len(images) != shifts.shape[0]:
         raise ValueError(
             f"{len(images)} images but shifts has {shifts.shape[0]} rows")
-    return [fftTranslateImage(img, (float(shifts[i, 0]), float(shifts[i, 1])), markInvalid)
+    return [fftTranslate2d(img, (float(shifts[i, 0]), float(shifts[i, 1])), markInvalid)
             for i, img in enumerate(images)]
 
 
 # --------------------------------------------------------------------------- #
 # orchestrator
 # --------------------------------------------------------------------------- #
-def coTranslateImages(images, masks=None):
+def coTranslate2d(images, masks=None):
     """Co-register N already-rotation-aligned complex-or-real images (steps 2-3-4-5).
 
     Args:
@@ -99,7 +99,7 @@ def coTranslateImages(images, masks=None):
 
     # steps 2 & 3: clamp (complex -> amplitude, or real passthrough) -> per-image
     # uint8. This is the estimation branch; it does NOT feed step 5.
-    clamped = [clamp.clampImageAmplitude(img) for img in images]
+    clamped = [clamp.clampAmplitude(img) for img in images]
     u8 = norm.normalizeImagesAmplitude(clamped)
 
     # step 4: all-pairwise phase-correlation shifts on the uint8 (with the

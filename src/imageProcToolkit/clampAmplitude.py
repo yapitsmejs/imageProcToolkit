@@ -12,7 +12,7 @@ import numpy as np
     This is a dB-histogram-mode clamp, factored so that:
 
       * it returns the clamped *linear amplitude* (not a normalized image) --
-        normalization is decoupled into imageProcToolkit/normalizeImageAmplitude.py (step 3);
+        normalization is decoupled into imageProcToolkit/normalizeArray.py (step 3);
       * the input ndim is preserved (no spurious channel axis is added);
       * nanmax / |crossPower| divisions and the all-NaN / all-zero cases are guarded;
       * it is pure numpy.
@@ -104,11 +104,14 @@ def dBHistogramMode(dBimage, outputDynamicRangePowerDB=60.0,
     return float(binCenters[int(np.argmax(smoothed))])
 
 
-def clampAmplitude(amp, outputDynamicRangePowerDB=60.0,
-                   inputDynamicRangePowerDB=None, binsPerDB=5):
+def _clampAmplitudeCore(amp, outputDynamicRangePowerDB=60.0,
+                        inputDynamicRangePowerDB=None, binsPerDB=5):
     """Clamp amplitude dynamic range to +/-outputDynamicRangePowerDB/2 around the dB
     histogram mode. Returns the clamped *linear amplitude* (same shape/dtype as the
     input amplitude). NaNs are preserved; the input ndim is preserved.
+
+    Internal core operating on an amplitude array; the public entry point is
+    `clampAmplitude` (complex/real image -> amplitude -> this core).
 
     The dB reference (global `nanmax`), the histogram mode (over all finite values),
     and the clamp window are all computed over the whole array, so an N-D / stacked
@@ -131,21 +134,21 @@ def clampAmplitude(amp, outputDynamicRangePowerDB=60.0,
     return (10.0 ** (clipped / 20.0)).astype(np.float32)
 
 
-def clampImageAmplitude(image, outputDynamicRangePowerDB=60.0,
+def clampAmplitude(image, outputDynamicRangePowerDB=60.0,
                         inputDynamicRangePowerDB=None):
     """Complex (or real) image, or an N-D / multi-channel stack, -> clamped linear
     amplitude.
 
-    Convenience wrapper: toAmplitude then clampAmplitude. Accepts complex or real
-    input of any ndim -- complex is reduced to amplitude (phase discarded), real is
-    passed through. A 2D image is clamped per-image (unchanged); an N-D stack (e.g.
+    Convenience wrapper: toAmplitude then _clampAmplitudeCore. Accepts complex or
+    real input of any ndim -- complex is reduced to amplitude (phase discarded),
+    real is passed through. A 2D image is clamped per-image (unchanged); an N-D stack (e.g.
     `(H, W, C)`) is clamped *jointly*: one shared 0-dB reference, one shared histogram
     mode, one shared clamp window across all channels -- preserving their relative
     brightness balance. Shape and dtype are preserved; the output is float32 clamped
     linear amplitude and is NOT normalized (see step 3). For per-image clamping of a
     stack, call this once per 2D slice."""
     amp = toAmplitude(image)
-    return clampAmplitude(amp, outputDynamicRangePowerDB, inputDynamicRangePowerDB)
+    return _clampAmplitudeCore(amp, outputDynamicRangePowerDB, inputDynamicRangePowerDB)
 
 
 # --------------------------------------------------------------------------- #
@@ -157,7 +160,7 @@ def _selfCheck():
 
     Asserts:
       (1) 2D: shape/dtype preserved, output finite within the expected dB window.
-      (2) joint == flatten-then-reshape: clampImageAmplitude on an (H, W, 3) complex
+      (2) joint == flatten-then-reshape: clampAmplitude on an (H, W, 3) complex
           stack is bit-identical to clamping the same data flattened to 1D and reshaped
           (same global max, same flattened histogram -> same mode -> same clip).
       (3) joint != independent: clamping the (H, W, 3) stack jointly differs from
@@ -170,7 +173,7 @@ def _selfCheck():
     # (1) 2D unchanged
     img2d = (rng.standard_normal((32, 32)) + 1j * rng.standard_normal((32, 32))
             ).astype(np.complex64)
-    out2d = clampImageAmplitude(img2d)
+    out2d = clampAmplitude(img2d)
     c2 = (out2d.shape == img2d.shape and out2d.dtype == np.float32
           and np.all(np.isfinite(out2d)))
 
@@ -179,25 +182,25 @@ def _selfCheck():
     base = (rng.standard_normal((24, 24)) + 1j * rng.standard_normal((24, 24))
             ).astype(np.complex64)
     stack = np.stack([base, 0.1 * base, 0.01 * base], axis=-1)   # (24, 24, 3)
-    joint = clampImageAmplitude(stack)
-    flat = clampImageAmplitude(stack.reshape(-1, order='C')).reshape(stack.shape,
+    joint = clampAmplitude(stack)
+    flat = clampAmplitude(stack.reshape(-1, order='C')).reshape(stack.shape,
                                                                      order='C')
     eq_flat = np.array_equal(joint, flat, equal_nan=True)
 
     # (3) joint != independent per-slice
-    indep = np.stack([clampImageAmplitude(stack[..., c]) for c in range(3)], axis=-1)
+    indep = np.stack([clampAmplitude(stack[..., c]) for c in range(3)], axis=-1)
     neq_indep = not np.array_equal(joint, indep, equal_nan=True)
 
     # (4) NaN: all-NaN channel + a mixed stack
     nanstack = stack.copy()
     nanstack[..., 0] = np.nan
-    out_nan = clampImageAmplitude(nanstack)
+    out_nan = clampAmplitude(nanstack)
     nan_ch0_allnan = bool(np.all(np.isnan(out_nan[..., 0])))
     nan_finite_ok = bool(np.all(np.isfinite(out_nan[..., 1:]))
                          and out_nan[..., 1:].shape == (24, 24, 2))
 
     ok = c2 and eq_flat and neq_indep and nan_ch0_allnan and nan_finite_ok
-    print("--- clampImageAmplitude self-check ---")
+    print("--- clampAmplitude self-check ---")
     print(f"  (1) 2D shape/dtype/finite           : {'PASS' if c2 else 'FAIL'}")
     print(f"  (2) joint == flatten-then-reshape   : {'PASS' if eq_flat else 'FAIL'}")
     print(f"  (3) joint != independent per-slice  : {'PASS' if neq_indep else 'FAIL'}")

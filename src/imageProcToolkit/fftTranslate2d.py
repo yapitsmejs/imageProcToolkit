@@ -7,7 +7,7 @@ import numpy as np
     to **i** (F(i) * conj(F(j)), peak -> shift applied to j). getTranslationalShifts returns
     per-image shifts t_i of shape (N, 2), columns (dy, dx), such that the residual
     res_ij = s_ij - (t_j - t_i) is minimized; driving it to zero gives
-    **t_j - t_i = s_ij**. Applying fftTranslateImage(image_i, t_i) to each image
+    **t_j - t_i = s_ij**. Applying fftTranslate2d(image_i, t_i) to each image
     therefore co-registers them under the zero-mean gauge (sum t = 0, no
     ground-truth image). The reference phase ramp exp(-2j*pi*(fx*dx + fy*dy)) gives
     output[n] = input[n - (dy, dx)] -- content moves by (dy, dx) -- identical to
@@ -65,12 +65,12 @@ except ImportError:
 # --------------------------------------------------------------------------- #
 # phase-ramp translation
 # --------------------------------------------------------------------------- #
-def fftTranslateImage(image, shift, markInvalid=True):
+def fftTranslate2d(image, shift, markInvalid=True):
     """Translate `image` by `shift = (dy, dx)` via an FFT phase-ramp with pad-and-crop
     anti-wraparound, preserving the input dtype (complex64 in -> complex64 out).
 
     The phase ramp exp(-2j*pi*(fx*dx + fy*dy)) gives output[n] = input[n - (dy, dx)]
-    -- content moves by (dy, dx) -- so fftTranslateImage(img, s) applies exactly the
+    -- content moves by (dy, dx) -- so fftTranslate2d(img, s) applies exactly the
     shift `s` (the convention getTranslationalShifts returns: applying t_i to image_i co-registers
     the set under t_j - t_i = s_ij).
 

@@ -74,6 +74,7 @@ def _phaseCorrelationMap(imgA, imgB, maskA=None, maskB=None):
     B = np.where(valid, (B - mB), 0.0).astype(np.float32)
 
     if _HAVE_CUPY_GPU:
+        print("Using cupy for phase correlation")
         Ag = cp.asarray(A)
         Bg = cp.asarray(B)
         crossPower = cp.fft.rfft2(Ag) * cp.conj(cp.fft.rfft2(Bg))

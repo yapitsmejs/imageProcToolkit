@@ -132,6 +132,7 @@ def fftTranslate2d(image, shift, markInvalid=True):
     phase = np.exp(-2j * np.pi * (fx * dx + fy * dy))
 
     if _HAVE_CUPY_GPU:
+        print("Using cupy for fft translation")
         gpuImg = cp.asarray(filled)
         padded = cp.pad(gpuImg, ((padY, padY), (padX, padX)), mode='constant')
         translated = cp.fft.ifft2(cp.fft.fft2(padded) * cp.asarray(phase))[cropR, cropC]

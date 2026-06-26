@@ -56,6 +56,7 @@ def fourierUpsample(a, up, axis):
     branch is never taken.)
     '''
     if _HAVE_CUPY_GPU and isinstance(a, cp.ndarray):
+        print("Using cupy for fourier upsample")
         return _fourierUpsample_cupy(a, up, axis)
 
     n = a.shape[axis]

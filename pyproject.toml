@@ -15,12 +15,12 @@ dependencies = [
     "numba",
 ]
 
-[project.optional-dependencies]
-# cupy ships as several mutually-exclusive CUDA wheels (cupy-cuda{11,12,13}x or
-# self-contained cupy); install the wheel that matches your host CUDA toolkit.
-# A usable GPU is NOT required for the base package -- cupy is an optional GPU
-# fast-path with a NumPy fallback when absent.
-gpu = ["cupy"]
+# Optional GPU acceleration. cupy is NOT pulled automatically -- it is a
+# machine-specific dependency (the wheel depends on your CUDA version/toolkit).
+# Install the matching wheel manually, e.g. `pip install cupy-cuda13x` (or
+# cupy-cuda12x / cupy-cuda11x), or run `scripts/install_cupy.py` to auto-detect
+# and install the right wheel into this project's venv. The base package falls
+# back to NumPy when cupy is absent.
 
 [project.urls]
 # Homepage = "https://github.com/<user>/imageProcToolkit"

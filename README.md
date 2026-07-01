@@ -140,13 +140,32 @@ preserved for interferometry), real in → real out:
 imgs = [np.ndarray, ...]                       # complex or real, all same shape
 transformed, params, diag = coTranslate2d(imgs, arrayScale='amplitude')
 # transformed : list of N arrays, co-registered (same dtype/unit as the inputs)
-# params      : (N, 2) per-image shifts (dy, dx) under a zero-mean gauge
-# diag        : diagnostics dict
+# params      : (N, 2) per-image shifts (dy, dx). Default gauge is zero-mean
+#               (sum(shifts) = 0, no image is ground truth).
+# diag        : diagnostics dict (nPairs, residuals)
 ```
 
 For rotation/scale + translation co-registration (inputs need not be rotation-aligned),
 use `coSimilarityTransform2d` instead — it returns `(transformed, params(N,4), diag)`
 with per-image `(theta, s, dy, dx)`.
+
+### Register toward a master image
+
+By default both orchestrators estimate **every** image pair (O(N²) pairs) and solve a
+zero-mean gauge (no image is ground truth). Pass `masterIndex=k` (negative wraps, so
+`-1` = the last image) to pin image `k` at the identity and register every other image
+toward it; this also switches estimation to the **O(N)** star graph (only the N−1
+master↔image pairs are estimated), which is faster for large stacks:
+
+```python
+transformed, params, diag = coTranslate2d(imgs, arrayScale='amplitude', masterIndex=-1)
+# params[masterIndex] is exactly the identity (0,0) -- or (0,0,0,0) for the
+# similarity variant. Every other row is the transform that aligns that image
+# to the master. diag['nPairs'] == N-1 (star), not N(N-1)/2 (all pairs).
+```
+
+Trade-off: the star uses one measurement per non-master image with no cross-checking
+from other pairs, so it is less noise-robust than the all-pairs least-squares.
 
 ## Modules
 

@@ -100,7 +100,9 @@ def coSimilarityTransform2d(images, arrayScale, masks=None, subpixel=True, upsam
                 an int node index (negative wraps, so -1 = the last image) to pin that
                 image at the identity and register every other image toward it. The same
                 master is used for both the rot/scale stage and the translation stage so
-                the composed similarity pins the master end-to-end.
+                the composed similarity pins the master end-to-end. Setting it also
+                switches estimation to the O(n) star graph (only the n-1 master<->image
+                pairs per stage) instead of all n(n-1)/2 pairs.
 
     Returns (transformed, params, diag):
         transformed: list of N images, each the **original input** warped by its per-image
@@ -123,18 +125,31 @@ def coSimilarityTransform2d(images, arrayScale, masks=None, subpixel=True, upsam
     if masks is None:
         masks = [np.isfinite(img) for img in images]
 
+    # When a master is nominated, estimate only the n-1 master<->image pairs (a star
+    # graph centered on the master) in BOTH stages instead of all n(n-1)/2 pairs --
+    # O(n) vs O(n^2) estimation. The same master k is used for both stages so the
+    # composed similarity pins the master end-to-end. The (min, max) edge keying matches
+    # the pairwise sign convention, so the fix-node solve yields per-image params
+    # relative to k.
+    starPairs = None
+    if masterIndex is not None:
+        k = masterIndex % n
+        starPairs = [(min(i, k), max(i, k)) for i in range(n) if i != k]
+
     # steps 2 & 3: resolve to intensity per arrayScale -> 10*log10 intensity-dB clamp ->
     # per-image uint8. This is the estimation branch; it does NOT feed step 5.
     clamped = [clamp(_toIntensity(img, arrayScale)) for img in images]
     u8 = [norm.normalizeToUint8(a) for a in np.log10(clamped)]
 
-    # stage 1: all-pairwise Fourier-Mellin rotation+scale on the uint8 magnitude spectra
-    # (with the input-derived masks) -> zero-mean-gauge per-image (theta, log s). Call the
-    # components (not getSimilarityTransform.getSimilarityTransform) so the diag dict is
-    # returned alongside p_rs and so stage 2 de-warps the clamped intensity (not the uint8).
+    # stage 1: pairwise Fourier-Mellin rotation+scale on the uint8 magnitude spectra
+    # (with the input-derived masks) -> per-image (theta, log s) under the chosen gauge.
+    # All pairs (zero-mean gauge) when masterIndex is None, or the n-1 star pairs
+    # (fix-node gauge) when set. Call the components (not
+    # getSimilarityTransform.getSimilarityTransform) so the diag dict is returned
+    # alongside p_rs and so stage 2 de-warps the clamped intensity (not the uint8).
     pw_rs = getSimilarityTransform.allPairwiseSimilarityTransforms(
                 u8, masks=masks, subpixel=subpixel, upsampleFactor=upsampleFactor,
-                highPass=highPass, nRho=nRho, nPhi=nPhi, rmin=rmin)
+                highPass=highPass, nRho=nRho, nPhi=nPhi, rmin=rmin, pairs=starPairs)
     p_rs = getSimilarityTransform.solveGlobalSimilarityRotScale(pw_rs, n,
                                                                 masterIndex=masterIndex)
     diag_rs = getSimilarityTransform.checkSimilarityRotScaleResiduals(pw_rs, p_rs)
@@ -151,7 +166,7 @@ def coSimilarityTransform2d(images, arrayScale, masks=None, subpixel=True, upsam
 
     pw_t = getTranslationalShifts.allPairwiseTranslationalShifts(
                 dewarped_u8, masks=dewarped_masks, subpixel=subpixel,
-                upsampleFactor=upsampleFactor)
+                upsampleFactor=upsampleFactor, pairs=starPairs)
     t = getTranslationalShifts.solveGlobalTranslationalShifts(pw_t, n, masterIndex=masterIndex)
     diag_t = getTranslationalShifts.checkTranslationalShiftResiduals(pw_t, t)
 

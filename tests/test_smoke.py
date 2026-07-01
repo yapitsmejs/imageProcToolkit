@@ -120,31 +120,36 @@ def test_coSimilarityTransformImages_callable():
     assert 'rotScale' in diag and 'translation' in diag
 
 
-def test_coTranslate2d_master_index_pins_last():
-    # masterIndex=-1 (last image) is fixed at (0, 0); the default is zero-mean.
+def test_coTranslate2d_master_index_star_estimation():
+    # masterIndex=-1 (last image): fix-node gauge AND O(n) star estimation -- only the
+    # n-1 master<->image pairs are estimated (not all n(n-1)/2). The default is zero-mean
+    # with all-pairs. (Star + fix-node is exact -- one edge per image -- so residual is 0;
+    # the fix-node == zero-mean - master-row identity no longer holds because the master
+    # run uses a different set of pairwise measurements than the all-pairs zero-mean run.)
     rng = np.random.default_rng(1)
     base = rng.standard_normal((32, 32)).astype(np.float32)
     imgs = [base, np.roll(base, shift=(2, -3), axis=(0, 1)),
             np.roll(base, shift=(-1, 4), axis=(0, 1))]
 
-    _, shifts_zm, _ = coTranslate2d(imgs, arrayScale='amplitude')
+    _, shifts_zm, diag_zm = coTranslate2d(imgs, arrayScale='amplitude')
     assert abs(shifts_zm.sum()) < 1e-6                      # default: zero-mean gauge
+    assert diag_zm['nPairs'] == 3                           # default: all pairs (n=3 -> 3)
 
     _, shifts_m, diag_m = coTranslate2d(imgs, arrayScale='amplitude', masterIndex=-1)
     assert shifts_m.shape == (3, 2)
     assert np.all(shifts_m[-1] == 0.0)                      # last image pinned at identity
-    # fix-node gauge == zero-mean gauge re-expressed relative to the last image:
-    assert np.allclose(shifts_m, shifts_zm - shifts_zm[-1])
-    assert diag_m['residualMax_px'] < 1e-6                  # residuals are gauge-invariant
+    assert diag_m['nPairs'] == 2                            # star: n-1 pairs, not 3
+    assert diag_m['residualMax_px'] < 1e-6                  # star + fix-node is exact
+    # each non-master shift is the transform that aligns it to the master (last image):
+    # img 1 was rolled (2,-3) vs base, and the master (img 2) was rolled (-1,4) vs base,
+    # so aligning img 1 to the master takes -(2,-3) + (-1,4)... i.e. the relative roll.
+    assert np.allclose(shifts_m[0], -(np.array([0, 0]) - np.array([-1, 4])))   # base vs master
+    assert np.allclose(shifts_m[1], -(np.array([2, -3]) - np.array([-1, 4])))  # img1 vs master
 
 
-def test_coSimilarityTransform2d_master_index_pins_last():
-    # masterIndex=-1 pins the last image's full 4-DOF similarity at identity and the
-    # co-registration still resolves cleanly. (The single-stage fix-node == zero-mean -
-    # master-row identity that test_coTranslate2d checks does NOT hold exactly here,
-    # because stage 2 estimates translation on images dewarped with the gauge-dependent
-    # stage-1 rot/scale -- a tiny, expected cross-gauge perturbation. So we assert the
-    # real correctness properties instead: master pinned + low residuals.)
+def test_coSimilarityTransform2d_master_index_star_estimation():
+    # masterIndex=-1 pins the last image's full 4-DOF similarity at identity and runs the
+    # O(n) star estimation in BOTH stages (n-1 pairs each), not all-pairs.
     rng = np.random.default_rng(2)
     base = rng.standard_normal((32, 32)).astype(np.float32)
     imgs = [base, np.roll(base, shift=(1, -2), axis=(0, 1)),
@@ -154,5 +159,7 @@ def test_coSimilarityTransform2d_master_index_pins_last():
                                                   masterIndex=-1)
     assert params_m.shape == (3, 4)
     assert np.all(params_m[-1] == 0.0)                      # last image pinned at identity
-    assert diag_m['rotScale']['residualMax_rot_rad'] < 1e-6   # rot/scale self-consistent
+    assert diag_m['rotScale']['nPairs'] == 2               # star: n-1 pairs per stage
+    assert diag_m['translation']['nPairs'] == 2
+    assert diag_m['rotScale']['residualMax_rot_rad'] < 1e-6   # star rot/scale is exact
     assert diag_m['translation']['residualMax_px'] < 0.1      # translations co-register

@@ -63,21 +63,30 @@ def pairwiseTranslationalShift(imgA, imgB, maskA=None, maskB=None, subpixel=True
     return dy, dx, peakHeight, float(peakHeight)
 
 
-def allPairwiseTranslationalShifts(images, masks=None, subpixel=True, upsampleFactor=1):
-    """Phase-correlation shift for every i < j pair (A=i, B=j).
+def allPairwiseTranslationalShifts(images, masks=None, subpixel=True, upsampleFactor=1,
+                                   pairs=None):
+    """Phase-correlation shift for every requested i < j pair (A=i, B=j).
 
     Returns dict keyed by (i, j) with i < j -> (dy, dx, peakHeight, confidence). Only the
     i < j half is stored (s_ji = -s_ij is derivable). `masks` is an optional parallel
-    list of boolean arrays (one per image)."""
+    list of boolean arrays (one per image).
+
+    pairs: optional iterable of (i, j) index tuples (each i < j) to estimate. None
+        (default) estimates all i < j pairs -- O(n^2) pairs. Callers that only need a
+        master-reference registration may pass the star-graph pair list
+        [(min(i, k), max(i, k)) for i in range(n) if i != k] to bound estimation at
+        O(n) pairs; the global solve with masterIndex=k then yields per-image shifts
+        relative to image k."""
     n = len(images)
+    if pairs is None:
+        pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
     pw = {}
-    for i in range(n):
+    for i, j in pairs:
         mA = masks[i] if masks is not None else None
-        for j in range(i + 1, n):
-            mB = masks[j] if masks is not None else None
-            dy, dx, ph, conf = pairwiseTranslationalShift(images[i], images[j], mA, mB,
-                                              subpixel, upsampleFactor)
-            pw[(i, j)] = (dy, dx, ph, conf)
+        mB = masks[j] if masks is not None else None
+        dy, dx, ph, conf = pairwiseTranslationalShift(images[i], images[j], mA, mB,
+                                          subpixel, upsampleFactor)
+        pw[(i, j)] = (dy, dx, ph, conf)
     return pw
 
 

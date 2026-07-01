@@ -209,22 +209,31 @@ def pairwiseSimilarityTransform(imgA, imgB, maskA=None, maskB=None,
 
 
 def allPairwiseSimilarityTransforms(images, masks=None, subpixel=True, upsampleFactor=1,
-                                    highPass=True, nRho=None, nPhi=None, rmin=1.0):
-    """Fourier-Mellin rotation+scale for every i < j pair (A=i, B=j).
+                                    highPass=True, nRho=None, nPhi=None, rmin=1.0,
+                                    pairs=None):
+    """Fourier-Mellin rotation+scale for every requested i < j pair (A=i, B=j).
 
     Returns dict keyed by (i, j) with i < j -> (theta, log s, peakHeight, confidence).
     Only the i < j half is stored (the inverse is derivable). `masks` is an optional
-    parallel list of boolean arrays (one per image)."""
+    parallel list of boolean arrays (one per image).
+
+    pairs: optional iterable of (i, j) index tuples (each i < j) to estimate. None
+        (default) estimates all i < j pairs -- O(n^2) pairs. Callers that only need a
+        master-reference registration may pass the star-graph pair list
+        [(min(i, k), max(i, k)) for i in range(n) if i != k] to bound estimation at
+        O(n) pairs; the global solve with masterIndex=k then yields per-image
+        rotation+scale relative to image k."""
     n = len(images)
+    if pairs is None:
+        pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
     pw = {}
-    for i in range(n):
+    for i, j in pairs:
         mA = masks[i] if masks is not None else None
-        for j in range(i + 1, n):
-            mB = masks[j] if masks is not None else None
-            theta, log_s, ph, conf = pairwiseSimilarityTransform(
-                images[i], images[j], mA, mB, subpixel, upsampleFactor,
-                highPass, nRho, nPhi, rmin)
-            pw[(i, j)] = (theta, log_s, ph, conf)
+        mB = masks[j] if masks is not None else None
+        theta, log_s, ph, conf = pairwiseSimilarityTransform(
+            images[i], images[j], mA, mB, subpixel, upsampleFactor,
+            highPass, nRho, nPhi, rmin)
+        pw[(i, j)] = (theta, log_s, ph, conf)
     return pw
 
 

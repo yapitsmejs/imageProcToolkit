@@ -119,7 +119,9 @@ def coTranslate2d(images, arrayScale, masks=None, masterIndex=None):
         masterIndex: None (default) for the zero-mean gauge (sum(shifts) = 0, no image
                 is ground truth -- the correction is distributed across all images), or
                 an int node index (negative wraps, so -1 = the last image) to pin that
-                image at the identity and register every other image toward it.
+                image at the identity and register every other image toward it. Setting
+                it also switches estimation to the O(n) star graph (only the n-1
+                master<->image pairs) instead of all n(n-1)/2 pairs.
 
     Returns (translated, shifts, diag):
         translated: list of N images, each the **original input** shifted by its
@@ -139,15 +141,27 @@ def coTranslate2d(images, arrayScale, masks=None, masterIndex=None):
     if masks is None:
         masks = [np.isfinite(img) for img in images]
 
+    # When a master is nominated, estimate only the n-1 master<->image pairs (a star
+    # graph centered on the master) instead of all n(n-1)/2 pairs -- O(n) vs O(n^2)
+    # estimation. The (min, max) edge keying matches the pairwise sign convention, so
+    # the fix-node solve with masterIndex=k yields per-image shifts relative to k.
+    starPairs = None
+    if masterIndex is not None:
+        k = masterIndex % len(images)
+        starPairs = [(min(i, k), max(i, k)) for i in range(len(images)) if i != k]
+
     # steps 2 & 3: resolve to intensity per arrayScale -> 10*log10 intensity-dB clamp
     # -> per-image uint8. This is the estimation branch; it does NOT feed step 5.
     clamped = [clamp(_toIntensity(img, arrayScale)) for img in images]
     u8 = [norm.normalizeToUint8(a) for a in np.log10(clamped)]
 
-    # step 4: all-pairwise phase-correlation shifts on the uint8 (with the
-    # input-derived masks) -> zero-mean-gauge per-image shifts. Call the components
-    # (not getTranslationalShifts.getTranslationalShifts) so the diag dict is returned alongside t.
-    pw = getTranslationalShifts.allPairwiseTranslationalShifts(u8, masks=masks)
+    # step 4: pairwise phase-correlation shifts on the uint8 (with the input-derived
+    # masks) -> per-image shifts under the chosen gauge. all pairs (zero-mean gauge)
+    # when masterIndex is None, or the n-1 star pairs (fix-node gauge) when set. Call
+    # the components (not getTranslationalShifts.getTranslationalShifts) so the diag
+    # dict is returned alongside t.
+    pw = getTranslationalShifts.allPairwiseTranslationalShifts(u8, masks=masks,
+                                                                pairs=starPairs)
     t = getTranslationalShifts.solveGlobalTranslationalShifts(pw, len(images),
                                                               masterIndex=masterIndex)
     diag = getTranslationalShifts.checkTranslationalShiftResiduals(pw, t)

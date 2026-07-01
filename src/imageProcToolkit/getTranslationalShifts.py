@@ -82,22 +82,66 @@ def allPairwiseTranslationalShifts(images, masks=None, subpixel=True, upsampleFa
 
 
 # --------------------------------------------------------------------------- #
-# global least-squares solve (zero-mean gauge)
+# global least-squares solve (zero-mean or fix-node gauge)
 # --------------------------------------------------------------------------- #
-def solveGlobalTranslationalShifts(pairwise, n):
-    """Per-image shifts t_i = (dy_i, dx_i) from the pairwise shifts, zero-mean gauge.
+def _solveLaplacianGauge(L, d, masterIndex=None):
+    """Solve the normal equations L p = -d for the per-image parameter block, with the
+    gauge freedom (the all-ones null space of the graph Laplacian) fixed one of two ways.
+
+    masterIndex=None (default): zero-mean gauge sum p = 0, fixed via the augmented system
+        [[L, 1],[1.T, 0]] @ [p, lam] = [-d, 0]. Distributes the correction across all
+        images -- no image is ground truth.
+    masterIndex=k (int, negative wraps): fix-node (Dirichlet) gauge -- image k is pinned
+        at the identity (p_k = 0) and all other images solve relative to it. Drop row/col
+        k from L and d and solve the reduced full-rank system on the remaining n-1 nodes;
+        edges incident to k already fed their +s into the surviving d rows and their
+        dropped -1 coupling multiplies p_k = 0, so no further adjustment is needed.
+
+    Args:
+        L: (n, n) unweighted graph Laplacian.
+        d: (n, m) stacked normal-equations RHS.
+        masterIndex: None or an int node index (negative wraps like a Python index).
+
+    Returns p of shape (n, m)."""
+    n = L.shape[0]
+    if masterIndex is None:
+        A = np.zeros((n + 1, n + 1), dtype=np.float64)
+        A[:n, :n] = L
+        A[:n, n] = 1.0
+        A[n, :n] = 1.0
+        rhs = np.zeros((n + 1, d.shape[1]), dtype=np.float64)
+        rhs[:n, :] = -d                                  # L p = -d
+        sol, *_ = np.linalg.lstsq(A, rhs, rcond=None)
+        return sol[:n, :]
+
+    k = masterIndex % n
+    free = [i for i in range(n) if i != k]
+    L_ff = L[np.ix_(free, free)]
+    d_f = d[free]
+    p_f, *_ = np.linalg.lstsq(L_ff, -d_f, rcond=None)   # reduced system is full-rank SPD
+    p = np.zeros((n, d.shape[1]), dtype=np.float64)
+    p[k] = 0.0
+    p[free] = p_f
+    return p
+
+
+def solveGlobalTranslationalShifts(pairwise, n, masterIndex=None):
+    """Per-image shifts t_i = (dy_i, dx_i) from the pairwise shifts.
 
     Unweighted least-squares: minimize sum_ij (s_ij - (t_j - t_i))^2 per coordinate. The
     normal equations are L t = -d (see the module docstring for the sign), where L is
     the unweighted graph Laplacian (L_ii = deg_i, L_ij = -1 per observed edge i<j) and
     d_k = sum_{k<j} s_kj - sum_{i<k} s_ik. The global translation is unobservable (L is
-    singular), so the zero-mean gauge sum t = 0 is fixed via the augmented system
-    [[L, 1],[1.T, 0]] @ [t, lam] = [-d, 0], solved with lstsq. This distributes the
-    correction across all images -- no image is ground truth.
+    singular), so the gauge is fixed one of two ways (see _solveLaplacianGauge): by
+    default the zero-mean gauge sum t = 0 (no image is ground truth), or, when
+    masterIndex is set, by pinning that image at the identity (t_k = 0) and solving the
+    rest relative to it.
 
     Args:
-        pairwise: dict (i, j) -> (dy, dx, peakHeight, confidence), i < j.
-        n:        number of images.
+        pairwise:     dict (i, j) -> (dy, dx, peakHeight, confidence), i < j.
+        n:            number of images.
+        masterIndex:  None (default, zero-mean gauge) or an int node index (negative
+                      wraps); image masterIndex is fixed at (0, 0).
 
     Returns t of shape (n, 2), row order = node index, columns (dy, dx)."""
     L = np.zeros((n, n), dtype=np.float64)
@@ -113,14 +157,7 @@ def solveGlobalTranslationalShifts(pairwise, n):
         d[i] += s
         d[j] -= s
 
-    A = np.zeros((n + 1, n + 1), dtype=np.float64)
-    A[:n, :n] = L
-    A[:n, n] = 1.0
-    A[n, :n] = 1.0
-    rhs = np.zeros((n + 1, 2), dtype=np.float64)
-    rhs[:n, :] = -d                                  # L t = -d
-    sol, *_ = np.linalg.lstsq(A, rhs, rcond=None)
-    return sol[:n, :]
+    return _solveLaplacianGauge(L, d, masterIndex)
 
 
 def checkTranslationalShiftResiduals(pairwise, shifts):

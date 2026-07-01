@@ -231,20 +231,24 @@ def allPairwiseSimilarityTransforms(images, masks=None, subpixel=True, upsampleF
 # --------------------------------------------------------------------------- #
 # global least-squares solve for rotation + scale (zero-mean gauge)
 # --------------------------------------------------------------------------- #
-def solveGlobalSimilarityRotScale(pairwise, n):
-    """Per-image (theta_i, log s_i) from the pairwise rot/scale, zero-mean gauge.
+def solveGlobalSimilarityRotScale(pairwise, n, masterIndex=None):
+    """Per-image (theta_i, log s_i) from the pairwise rot/scale.
 
     Unweighted least-squares: minimize sum_ij ((theta_ij - (theta_j - theta_i))^2 +
     (log s_ij - (log s_j - log s_i))^2). Rotation and scale are exactly additive in
     these Lie-algebra coordinates, so the normal equations are L p = -d with the same
     unweighted graph Laplacian as solveGlobalTranslationalShifts (L_ii = deg_i,
     L_ij = -1) and d_k = sum_{k<j} s_kj - sum_{i<k} s_ik. The global rotation+scale is
-    unobservable (L is singular), so the zero-mean gauge sum p = 0 is fixed via the
-    augmented system [[L, 1],[1.T, 0]] @ [p, lam] = [-d, 0], solved with lstsq.
+    unobservable (L is singular), so the gauge is fixed one of two ways (see
+    getTranslationalShifts._solveLaplacianGauge): by default the zero-mean gauge
+    sum p = 0, or, when masterIndex is set, by pinning that image at the identity
+    (p_k = 0) and solving the rest relative to it.
 
     Args:
-        pairwise: dict (i, j) -> (theta, log s, peakHeight, confidence), i < j.
-        n:        number of images.
+        pairwise:     dict (i, j) -> (theta, log s, peakHeight, confidence), i < j.
+        n:            number of images.
+        masterIndex:  None (default, zero-mean gauge) or an int node index (negative
+                      wraps); image masterIndex is fixed at (0, 0).
 
     Returns p of shape (n, 2), row order = node index, columns (theta, log s)."""
     L = np.zeros((n, n), dtype=np.float64)
@@ -258,14 +262,7 @@ def solveGlobalSimilarityRotScale(pairwise, n):
         d[i] += s
         d[j] -= s
 
-    A = np.zeros((n + 1, n + 1), dtype=np.float64)
-    A[:n, :n] = L
-    A[:n, n] = 1.0
-    A[n, :n] = 1.0
-    rhs = np.zeros((n + 1, 2), dtype=np.float64)
-    rhs[:n, :] = -d                                  # L p = -d
-    sol, *_ = np.linalg.lstsq(A, rhs, rcond=None)
-    return sol[:n, :]
+    return getTranslationalShifts._solveLaplacianGauge(L, d, masterIndex)
 
 
 def checkSimilarityRotScaleResiduals(pairwise, params):

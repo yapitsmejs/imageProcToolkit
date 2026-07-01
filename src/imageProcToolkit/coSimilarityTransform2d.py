@@ -75,7 +75,8 @@ def _toIntensity(array, arrayScale):
 # orchestrator
 # --------------------------------------------------------------------------- #
 def coSimilarityTransform2d(images, arrayScale, masks=None, subpixel=True, upsampleFactor=1,
-                                highPass=True, nRho=None, nPhi=None, rmin=1.0):
+                                highPass=True, nRho=None, nPhi=None, rmin=1.0,
+                                masterIndex=None):
     """Co-register N complex-or-real images under a 4-DOF similarity per image
     (steps 2-3-4-5; rotation need not be pre-aligned).
 
@@ -94,6 +95,12 @@ def coSimilarityTransform2d(images, arrayScale, masks=None, subpixel=True, upsam
                 in the uint8.
         subpixel, upsampleFactor, highPass, nRho, nPhi, rmin: forwarded to the stage-1
                 pairwise Fourier-Mellin estimator (see getSimilarityTransform).
+        masterIndex: None (default) for the zero-mean gauge (4 gauge DOF fixed, no image
+                is ground truth -- the correction is distributed across all images), or
+                an int node index (negative wraps, so -1 = the last image) to pin that
+                image at the identity and register every other image toward it. The same
+                master is used for both the rot/scale stage and the translation stage so
+                the composed similarity pins the master end-to-end.
 
     Returns (transformed, params, diag):
         transformed: list of N images, each the **original input** warped by its per-image
@@ -101,8 +108,9 @@ def coSimilarityTransform2d(images, arrayScale, masks=None, subpixel=True, upsam
                     border). dtype is preserved: complex in -> complex out (phase
                     preserved), real in -> real out.
         params:      (N, 4) array, columns (theta, log s, dy, dx), row order = input
-                    order, zero-mean gauge per component (4 gauge DOF fixed, no
-                    ground-truth image). NB the scale column is log s -- exp it for the
+                    order. By default the zero-mean gauge holds per component (no
+                    ground-truth image); with masterIndex set, params[masterIndex] =
+                    (0, 0, 0, 0). NB the scale column is log s -- exp it for the
                     applied scale (similarityTransformImages does this internally).
         diag:        {'rotScale': checkSimilarityRotScaleResiduals dict,
                       'translation': checkTranslationalShiftResiduals dict}.
@@ -127,7 +135,8 @@ def coSimilarityTransform2d(images, arrayScale, masks=None, subpixel=True, upsam
     pw_rs = getSimilarityTransform.allPairwiseSimilarityTransforms(
                 u8, masks=masks, subpixel=subpixel, upsampleFactor=upsampleFactor,
                 highPass=highPass, nRho=nRho, nPhi=nPhi, rmin=rmin)
-    p_rs = getSimilarityTransform.solveGlobalSimilarityRotScale(pw_rs, n)
+    p_rs = getSimilarityTransform.solveGlobalSimilarityRotScale(pw_rs, n,
+                                                                masterIndex=masterIndex)
     diag_rs = getSimilarityTransform.checkSimilarityRotScaleResiduals(pw_rs, p_rs)
 
     # stage 2: de-rotate + de-scale the **clamped intensity** (float32) by (theta_i, s_i),
@@ -143,7 +152,7 @@ def coSimilarityTransform2d(images, arrayScale, masks=None, subpixel=True, upsam
     pw_t = getTranslationalShifts.allPairwiseTranslationalShifts(
                 dewarped_u8, masks=dewarped_masks, subpixel=subpixel,
                 upsampleFactor=upsampleFactor)
-    t = getTranslationalShifts.solveGlobalTranslationalShifts(pw_t, n)
+    t = getTranslationalShifts.solveGlobalTranslationalShifts(pw_t, n, masterIndex=masterIndex)
     diag_t = getTranslationalShifts.checkTranslationalShiftResiduals(pw_t, t)
 
     # compose (N, 4) = (theta, log s, dy, dx) and apply to the ORIGINAL inputs (step 5):

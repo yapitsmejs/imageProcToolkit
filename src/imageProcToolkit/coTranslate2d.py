@@ -100,7 +100,7 @@ def fftTranslateImages(images, shifts, arrayScale, markInvalid=True):
 # --------------------------------------------------------------------------- #
 # orchestrator
 # --------------------------------------------------------------------------- #
-def coTranslate2d(images, arrayScale, masks=None):
+def coTranslate2d(images, arrayScale, masks=None, masterIndex=None):
     """Co-register N already-rotation-aligned complex-or-real images (steps 2-3-4-5).
 
     Args:
@@ -116,16 +116,21 @@ def coTranslate2d(images, arrayScale, masks=None):
                 np.isfinite of each input. NB: masks must come from the input, NOT the
                 uint8 -- normalizeToUint8 maps NaN -> 0 sentinel, so NaN is
                 undetectable in the uint8 (see step 3).
+        masterIndex: None (default) for the zero-mean gauge (sum(shifts) = 0, no image
+                is ground truth -- the correction is distributed across all images), or
+                an int node index (negative wraps, so -1 = the last image) to pin that
+                image at the identity and register every other image toward it.
 
     Returns (translated, shifts, diag):
         translated: list of N images, each the **original input** shifted by its
                     per-image (dy, dx) via fftTranslateImages (markInvalid=True ->
                     NaN border). dtype is preserved: complex in -> complex out
                     (phase preserved), real in -> real out.
-        shifts:     (N, 2) array, columns (dy, dx), row order = input order.
+        shifts:     (N, 2) array, columns (dy, dx), row order = input order. By default
+                    the zero-mean gauge holds (sum(shifts) = 0); with masterIndex set,
+                    shifts[masterIndex] = (0, 0).
         diag:       checkTranslationalShiftResiduals dict (residualMax_px, residualMean_px,
-                    nPairs) -- zero-mean gauge: sum(shifts) = 0, no ground-truth
-                    image.
+                    nPairs) -- gauge-invariant (unchanged between gauges).
     """
     if arrayScale not in ('amplitude', 'intensity'):
         raise ValueError(f"arrayScale must be 'amplitude' or 'intensity', got {arrayScale!r}")
@@ -143,7 +148,8 @@ def coTranslate2d(images, arrayScale, masks=None):
     # input-derived masks) -> zero-mean-gauge per-image shifts. Call the components
     # (not getTranslationalShifts.getTranslationalShifts) so the diag dict is returned alongside t.
     pw = getTranslationalShifts.allPairwiseTranslationalShifts(u8, masks=masks)
-    t = getTranslationalShifts.solveGlobalTranslationalShifts(pw, len(images))
+    t = getTranslationalShifts.solveGlobalTranslationalShifts(pw, len(images),
+                                                              masterIndex=masterIndex)
     diag = getTranslationalShifts.checkTranslationalShiftResiduals(pw, t)
 
     # step 5: apply each per-image shift to the **original input** (not the uint8 /

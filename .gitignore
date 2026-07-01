@@ -16,6 +16,3 @@ dist/
 # Virtual environments
 .venv/
 venv/
-
-# claude
-CLAUDE.md

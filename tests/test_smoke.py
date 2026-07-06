@@ -22,7 +22,7 @@ from imageProcToolkit.coSimilarityTransform2d import coSimilarityTransform2d
 
 
 def test_version():
-    assert imageProcToolkit.__version__ == "0.1.0"
+    assert imageProcToolkit.__version__ == "0.1.1"
 
 
 def test_all_submodules_importable():

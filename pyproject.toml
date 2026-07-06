@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "imageProcToolkit"
-version = "0.1.0"
+version = "0.1.1"
 description = "Image-processing toolkit (FFT upsampling, interpolation, sub-pixel translation, co-registration)."
 readme = "README.md"
 license = {text = "MIT"}

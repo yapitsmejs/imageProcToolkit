@@ -19,4 +19,4 @@ Import the public callables from their submodules explicitly, e.g.::
     from imageProcToolkit.interp2 import interp2linear
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

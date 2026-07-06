@@ -65,6 +65,23 @@ except ImportError:
 # --------------------------------------------------------------------------- #
 # phase-ramp translation
 # --------------------------------------------------------------------------- #
+def _fftTranslate_core(filled, phase, padY, padX, cropR, cropC, xp):
+    """``xp``-parameterized pad + phase-ramp FFT translate + crop (numpy or cupy).
+
+    Zero-pad `filled` by (padY, padX), FFT2, multiply by the precomputed phase
+    ramp, inverse-FFT2, and crop back to the original shape. The phase ramp and
+    crop slices are computed host-side by the caller; ``xp.asarray`` moves them
+    to the device on the cupy path (no-op on NumPy). Returns the translated
+    array on `xp`'s backend. This is the only array-module step that differs
+    between backends; the NaN / markInvalid post-processing in ``fftTranslate2d``
+    is host-side NumPy either way (it runs on the numpy result after cp.asnumpy).
+    """
+    arr = xp.asarray(filled)
+    ph = xp.asarray(phase)
+    padded = xp.pad(arr, ((padY, padY), (padX, padX)), mode='constant')
+    return xp.fft.ifft2(xp.fft.fft2(padded) * ph)[cropR, cropC]
+
+
 def fftTranslate2d(image, shift, arrayScale, markInvalid=True):
     """Translate `image` by `shift = (dy, dx)` via an FFT phase-ramp with pad-and-crop
     anti-wraparound, preserving the input dtype (complex64 in -> complex64 out).
@@ -142,17 +159,16 @@ def fftTranslate2d(image, shift, arrayScale, markInvalid=True):
     fx = np.fft.fftfreq(W + 2 * padX)[None, :]
     phase = np.exp(-2j * np.pi * (fx * dx + fy * dy))
 
+    # Auto-dispatch the FFT step on `_HAVE_CUPY_GPU` (numpy in -> numpy out: the
+    # NaN handling and markInvalid post-processing are host-side either way, so
+    # the GPU only accelerates the pad/FFT/crop via the xp-parameterized core
+    # and the result is brought back to NumPy before the host post-processing).
     if _HAVE_CUPY_GPU:
         print("Using cupy for fft translation")
-        gpuImg = cp.asarray(filled)
-        padded = cp.pad(gpuImg, ((padY, padY), (padX, padX)), mode='constant')
-        translated = cp.fft.ifft2(cp.fft.fft2(padded) * cp.asarray(phase))[cropR, cropC]
-        translated = cp.asnumpy(translated)
-        del gpuImg, padded
+        translated = cp.asnumpy(_fftTranslate_core(filled, phase, padY, padX, cropR, cropC, cp))
         cp.get_default_memory_pool().free_all_blocks()
     else:
-        padded = np.pad(filled, ((padY, padY), (padX, padX)), mode='constant')
-        translated = np.fft.ifft2(np.fft.fft2(padded) * phase)[cropR, cropC]
+        translated = _fftTranslate_core(filled, phase, padY, padX, cropR, cropC, np)
 
     # real input -> keep the output real (the phase-ramp IFFT has ~0 imaginary
     # residual; take magnitude).

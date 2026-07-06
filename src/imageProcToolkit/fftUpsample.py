@@ -19,22 +19,27 @@ except ImportError:
     _HAVE_CUPY_GPU = False
 
 
-def _fourierUpsample_cupy(a, up, axis):
-    """cupy backend for fourierUpsample (`a` is a cupy.ndarray; returns cupy).
+def _fourierUpsample_core(a, up, axis, xp):
+    """``xp``-parameterized FFT zero-padding upsample core (numpy or cupy).
 
-    Same zero-padded-spectrum algorithm as the NumPy path, but the FFT/shift/pad
-    run on the GPU via cuFFT. complex64 stays complex64 (cuFFT C2C single).
+    Same zero-padded-spectrum algorithm on both backends: FFT along `axis`,
+    fftshift, zero-pad the spectrum symmetrically to length `up * n`, ifftshift,
+    inverse-FFT, scale. complex64 stays complex64 (cuFFT C2C single on the GPU).
+    ``xp.asarray(a)`` is a no-op on the NumPy path and the host->device move on
+    the cupy path, so the public ``fourierUpsample`` can pass whichever backend it
+    dispatches to without a separate transfer step.
     """
-    n = a.shape[axis]
+    arr = xp.asarray(a)
+    n = arr.shape[axis]
     m = n * up
-    F = cp.fft.fft(a, axis=axis)
-    Fs = cp.fft.fftshift(F, axes=axis)
+    F = xp.fft.fft(arr, axis=axis)
+    Fs = xp.fft.fftshift(F, axes=axis)
     pad = m - n
-    padWidth = [(0, 0)] * a.ndim
+    padWidth = [(0, 0)] * arr.ndim
     padWidth[axis] = (pad // 2, pad - pad // 2)
-    Fs = cp.pad(Fs, padWidth, mode='constant')
-    Fp = cp.fft.ifftshift(Fs, axes=axis)
-    return cp.fft.ifft(Fp, axis=axis) * up
+    Fs = xp.pad(Fs, padWidth, mode='constant')
+    Fp = xp.fft.ifftshift(Fs, axes=axis)
+    return xp.fft.ifft(Fp, axis=axis) * up
 
 
 def fourierUpsample(a, up, axis):
@@ -47,36 +52,34 @@ def fourierUpsample(a, up, axis):
     which differs slightly from a flattop-windowed sinc near edges and strong
     discontinuities.
 
-    Dispatches on the input array type: a cupy.ndarray is upsampled on the GPU
-    (cuFFT) and returned as a cupy array; anything else uses the NumPy FFT path
-    and returns a NumPy array. So a caller that wants GPU acceleration moves the
-    array to the GPU once with cupy.asarray and keeps it there across the
-    chained per-axis upsamples — the ~1 GB intermediate never crosses PCIe.
-    (GPU use is gated on a device actually being present; without one the cupy
-    branch is never taken.)
+    Auto-accelerates on a CUDA device when present (the cross-repo convention):
+    a cupy input is upsampled on the GPU (cuFFT) and returned as a cupy array
+    (cupy in -> cupy out); a NumPy input is upsampled on the GPU and returned as
+    a NumPy array (numpy in -> numpy out, auto round-tripped via cp.asnumpy). So
+    a caller that wants to keep the array resident across chained per-axis
+    upsamples passes a cupy array — the ~1 GB intermediate never crosses PCIe.
+    Without a GPU the NumPy FFT path is used regardless.
     '''
-    if _HAVE_CUPY_GPU and isinstance(a, cp.ndarray):
+    if _HAVE_CUPY_GPU:
         print("Using cupy for fourier upsample")
-        return _fourierUpsample_cupy(a, up, axis)
-
-    n = a.shape[axis]
-    m = n * up
-    F = np.fft.fft(a, axis=axis)
-    Fs = np.fft.fftshift(F, axes=axis)
-    pad = m - n
-    padWidth = [(0, 0)] * a.ndim
-    padWidth[axis] = (pad // 2, pad - pad // 2)
-    Fs = np.pad(Fs, padWidth, mode='constant')
-    Fp = np.fft.ifftshift(Fs, axes=axis)
-    return np.fft.ifft(Fp, axis=axis) * up
+        out = _fourierUpsample_core(a, up, axis, cp)
+        if isinstance(a, cp.ndarray):
+            return out                 # cupy in -> cupy out
+        return cp.asnumpy(out)         # numpy in -> numpy out
+    return _fourierUpsample_core(a, up, axis, np)
 
 
-def _fourierUpsample_selfcheck():
+def _fourierUpsample_cupy_selfcheck():
     """Equivalence check: cupy fourierUpsample vs the NumPy reference.
 
-    cuFFT and NumPy's FFT use different backends, so the complex64 results agree
-    to ~1e-5 relative but not bit-for-bit; we check allclose, not array_equal.
-    Skipped (and reported as such) when no GPU is available.
+    The NumPy reference is produced by calling the ``xp``-parameterized
+    ``_fourierUpsample_core`` with ``np`` directly (bypassing ``fourierUpsample``'s
+    auto-dispatch, which uses the GPU whenever one is present). The GPU result
+    comes from the public ``fourierUpsample`` with a cupy input (cupy in -> cupy
+    out), brought back with ``cp.asnumpy``. The numpy-in -> numpy-out contract is
+    also exercised. cuFFT and NumPy's FFT use different backends, so the
+    complex64 results agree to ~1e-5 relative but not bit-for-bit; we check
+    allclose, not array_equal. Skipped (and reported as such) when no GPU.
     """
     if not _HAVE_CUPY_GPU:
         print("fourierUpsample self-check: skipped (no GPU available — NumPy path only).")
@@ -85,27 +88,32 @@ def _fourierUpsample_selfcheck():
     rng = np.random.default_rng(0)
     a = (rng.standard_normal((64, 48)) + 1j * rng.standard_normal((64, 48))).astype(np.complex64)
 
-    # reference: both upsamples on NumPy
-    ref = fourierUpsample(fourierUpsample(a, 2, axis=1), 2, axis=0)
-    # gpu: move up once, upsample both axes on GPU, bring back once
+    # NumPy reference: the core directly with np (bypasses auto-dispatch). The
+    # core signature is (a, up, axis, xp); chain the two per-axis upsamples.
+    ref = _fourierUpsample_core(_fourierUpsample_core(a, 2, 1, np), 2, 0, np)
+    # GPU via the public function: cupy in -> cupy out across both axes, then
+    # bring back once.
     g = cp.asarray(a)
     g = fourierUpsample(g, 2, axis=1)
     g = fourierUpsample(g, 2, axis=0)
     got = cp.asnumpy(g)
+    # numpy in -> numpy out contract: a NumPy input must return a NumPy array.
+    nio = fourierUpsample(a, 2, axis=1)
+    nio_ok = isinstance(nio, np.ndarray)
 
     shape_ok = ref.shape == got.shape == (a.shape[0] * 2, a.shape[1] * 2)
     dtype_ok = got.dtype == ref.dtype == np.complex64
     vals_close = np.allclose(got, ref, rtol=1e-4, atol=1e-5)
     max_diff = float(np.nanmax(np.abs(got - ref)))
 
-    ok = bool(shape_ok and dtype_ok and vals_close)
+    ok = bool(shape_ok and dtype_ok and vals_close and nio_ok)
     print(f"fourierUpsample self-check: {'PASS' if ok else 'FAIL'} "
           f"(shape={shape_ok}, dtype={dtype_ok}, values_close={vals_close}, "
-          f"max_abs_diff={max_diff:.3e})")
+          f"nio={nio_ok}, max_abs_diff={max_diff:.3e})")
     if not ok:
         print("ref shape", ref.shape, "got shape", got.shape)
     return ok
 
 
 if __name__ == "__main__":
-    _fourierUpsample_selfcheck()
+    _fourierUpsample_cupy_selfcheck()

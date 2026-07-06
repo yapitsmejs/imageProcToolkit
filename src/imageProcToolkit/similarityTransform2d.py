@@ -2,21 +2,11 @@ import numpy as np
 from .interp2 import interp2linear
 from .fftTranslate2d import fftTranslate2d
 
-# cupy is an optional GPU fast-path. Only the **translation** stage of a similarity
-# transform can use it (via fftTranslate2d's own guarded switch); the rotation+scale
-# warp is a bilinear resample run through interp2 (numba, CPU) -- there is no cupy
-# bilinear-warp path in this toolkit, so similarityRotScaleImage never dispatches to
-# cupy. The gate is imported for parity with the rest of the package and so a future
-# GPU warp could slot in here; the module never hard-fails on a CPU-only host.
-try:
-    import cupy as cp  # noqa: F401
-    try:
-        _HAVE_CUPY_GPU = cp.cuda.runtime.getDeviceCount() > 0
-    except Exception:
-        _HAVE_CUPY_GPU = False
-except ImportError:
-    cp = None
-    _HAVE_CUPY_GPU = False
+# No cupy in this module: the rotation+scale warp is a bilinear resample run
+# through interp2 (numba, CPU), and the only GPU-accelerated stage -- the
+# translation phase-ramp FFT -- is delegated to fftTranslate2d, which carries its
+# own guarded cupy gate and auto-dispatch. A future GPU warp would slot in here
+# and add the standard cupy gate at that point.
 
 '''
     Apply a 4-DOF similarity transform G = (theta, s, dy, dx) to an image: rotation by

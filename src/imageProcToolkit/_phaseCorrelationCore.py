@@ -37,6 +37,28 @@ except ImportError:
 # --------------------------------------------------------------------------- #
 # pairwise phase correlation
 # --------------------------------------------------------------------------- #
+def _phaseCorrelation_core(A, B, shape, xp):
+    """``xp``-parameterized normalized cross-power phase-correlation FFT step
+    (numpy or cupy).
+
+    rfft2 cross-power of A,B, normalize by (|crossPower| + eps) with eps scaled to
+    the cross-power max, irfft2 back to `shape`, return |.|. The mean-removal,
+    mask intersection, and valid-count are host-side NumPy (run by the caller in
+    ``_phaseCorrelationMap``); this core is the only array-module step that
+    differs between backends. ``xp.asarray`` moves A,B to the device on the cupy
+    path (no-op on NumPy). Returns the non-negative correlation surface on
+    ``xp``'s backend. The eps-max readback (``float(xp.abs(crossPower).max())``)
+    syncs the GPU to the host for one scalar -- the same host round-trip the old
+    mirrored cupy branch did.
+    """
+    a = xp.asarray(A)
+    b = xp.asarray(B)
+    crossPower = xp.fft.rfft2(a) * xp.conj(xp.fft.rfft2(b))
+    eps = 1e-12 * (float(xp.abs(crossPower).max()) or 1.0)
+    R = crossPower / (xp.abs(crossPower) + eps)
+    return xp.abs(xp.fft.irfft2(R, s=shape))
+
+
 def _phaseCorrelationMap(imgA, imgB, maskA=None, maskB=None):
     """Normalized cross-power phase-correlation surface of two real images.
 
@@ -73,21 +95,16 @@ def _phaseCorrelationMap(imgA, imgB, maskA=None, maskB=None):
     A = np.where(valid, (A - mA), 0.0).astype(np.float32)
     B = np.where(valid, (B - mB), 0.0).astype(np.float32)
 
+    # Auto-dispatch the FFT step on `_HAVE_CUPY_GPU` (numpy in -> numpy out: the
+    # mean-removal / masking preprocessing is host-side NumPy either way, so the
+    # GPU only accelerates the rfft2/irfft2 pair via the xp-parameterized core
+    # and the result is brought back to NumPy).
     if _HAVE_CUPY_GPU:
         print("Using cupy for phase correlation")
-        Ag = cp.asarray(A)
-        Bg = cp.asarray(B)
-        crossPower = cp.fft.rfft2(Ag) * cp.conj(cp.fft.rfft2(Bg))
-        eps = 1e-12 * (float(cp.abs(crossPower).max()) or 1.0)
-        R = crossPower / (cp.abs(crossPower) + eps)
-        corrMap = np.abs(cp.asnumpy(cp.fft.irfft2(R, s=A.shape)))
-        del Ag, Bg, crossPower, R
+        corrMap = cp.asnumpy(_phaseCorrelation_core(A, B, A.shape, cp))
         cp.get_default_memory_pool().free_all_blocks()
     else:
-        crossPower = np.fft.rfft2(A) * np.conj(np.fft.rfft2(B))
-        eps = 1e-12 * (float(np.abs(crossPower).max()) or 1.0)
-        R = crossPower / (np.abs(crossPower) + eps)
-        corrMap = np.abs(np.fft.irfft2(R, s=A.shape))
+        corrMap = _phaseCorrelation_core(A, B, A.shape, np)
     return corrMap, nValid
 
 
@@ -163,3 +180,59 @@ def _wraparoundPick(truePeak, shape):
     wrappedPeak = truePeak - np.asarray(shape, dtype=np.float64)
     shift = np.where(np.abs(truePeak) < np.abs(wrappedPeak), truePeak, wrappedPeak)
     return float(shift[0]), float(shift[1])
+
+
+def _phaseCorrelationMap_cupy_selfcheck():
+    """Equivalence check: cupy phase-correlation vs the NumPy reference.
+
+    The NumPy reference is produced by calling the ``xp``-parameterized
+    ``_phaseCorrelation_core`` with ``np`` directly (bypassing
+    ``_phaseCorrelationMap``'s auto-dispatch, which uses the GPU whenever one is
+    present). The GPU result comes from the public ``_phaseCorrelationMap``
+    (numpy in -> numpy out, auto round-tripped through the GPU). cuFFT and NumPy's
+    FFT use different backends, so the float32 correlation surfaces agree to
+    ~1e-5 relative but not bit-for-bit; we check allclose, not array_equal, and
+    also that the integer peak lands at the same pixel. Skipped (and reported as
+    such) when no GPU.
+    """
+    if not _HAVE_CUPY_GPU:
+        print("phaseCorrelationMap self-check: skipped (no GPU available — NumPy path only).")
+        return True
+
+    rng = np.random.default_rng(0)
+    H, W = 64, 48
+    base = (rng.standard_normal((H, W))).astype(np.float32)
+    # circularly shift base by (dy, dx) to build imgB; the phase-correlation peak
+    # should land at that shift (mod shape) -- exercises the FFT pair end to end.
+    dy, dx = 5, -3
+    imgB = np.roll(base, (dy, dx), axis=(0, 1))
+    imgA = base
+
+    # NumPy reference: reproduce _phaseCorrelationMap's host-side preprocessing,
+    # then force the NumPy core (bypasses auto-dispatch, which would otherwise
+    # compute on the GPU when one is present).
+    A = np.where(np.isfinite(imgA), imgA - float(imgA.mean()), 0.0).astype(np.float32)
+    B = np.where(np.isfinite(imgB), imgB - float(imgB.mean()), 0.0).astype(np.float32)
+    ref = np.abs(_phaseCorrelation_core(A, B, A.shape, np))
+    # GPU via the public function: numpy in -> numpy out.
+    got, nValid = _phaseCorrelationMap(imgA, imgB)
+    nio_ok = isinstance(got, np.ndarray) and isinstance(ref, np.ndarray)
+
+    shape_ok = ref.shape == got.shape == (H, W)
+    dtype_ok = got.dtype == ref.dtype == np.float32
+    vals_close = np.allclose(got, ref, rtol=1e-3, atol=1e-4)
+    # integer peak must agree (the sub-pixel estimator starts from this pixel).
+    peak_ref = np.unravel_index(int(np.argmax(ref)), ref.shape)
+    peak_got = np.unravel_index(int(np.argmax(got)), got.shape)
+    peak_ok = peak_ref == peak_got
+    max_diff = float(np.nanmax(np.abs(got - ref)))
+
+    ok = bool(shape_ok and dtype_ok and vals_close and peak_ok and nio_ok)
+    print(f"phaseCorrelationMap self-check: {'PASS' if ok else 'FAIL'} "
+          f"(shape={shape_ok}, dtype={dtype_ok}, values_close={vals_close}, "
+          f"peak_match={peak_ok}, nio={nio_ok}, max_abs_diff={max_diff:.3e})")
+    return ok
+
+
+if __name__ == "__main__":
+    _phaseCorrelationMap_cupy_selfcheck()

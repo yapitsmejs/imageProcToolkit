@@ -1,47 +1,39 @@
-# imageProcToolkit
+# image-proc-toolkit
 
 Image-processing toolkit: FFT zero-padding upsampling, MATLAB-style bilinear
 interpolation, atomic sub-pixel image translation, all-pairwise phase-correlation
-shift estimation, intensity clamping/normalization, and multi-image co-registration
-(translation and 4-DOF similarity). Complex (SAR / interferometry) inputs are
-first-class — phase is preserved through the co-registration pipeline. `numpy` and
-`numba` are required; `cupy` is an **optional** GPU fast-path with a NumPy fallback
-when it (or a CUDA device) is absent.
+shift estimation, intensity clamping/normalization, and multi-image
+co-registration (translation and 4-DOF similarity). Complex (SAR /
+interferometry) inputs are first-class — phase is preserved through the
+co-registration pipeline. `numpy` and `numba` are required; `cupy` is an
+**optional** GPU fast-path with a NumPy fallback when it (or a CUDA device) is
+absent.
 
-## Install — pull from GitHub into an external repo
+## Install
 
-The package is **not on PyPI**; install it directly from GitHub. `numpy` and `numba`
-are pulled automatically as required dependencies. `cupy` is intentionally **not**
-installed here — it is a machine-specific CUDA wheel (see
-[Set up cupy](#set-up-cupy-optional-gpu-fast-path) below).
-
-### uv (this project's own toolchain)
-
-New project:
+This project is managed with [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
-uv init myrepo && cd myrepo
-uv add "git+https://github.com/yapitsmejs/imageProcToolkit.git"
+uv sync --extra dev          # create .venv, install runtime deps (numpy, numba) + dev tooling (pytest, ruff, mypy)
+```
+
+### As a dependency from git
+
+The package is **not on PyPI**; install it directly from GitHub. `numpy` and
+`numba` are pulled automatically as required dependencies. `cupy` is
+intentionally **not** installed here — it is a machine-specific CUDA wheel (see
+[Set up cupy](#set-up-cupy-optional-gpu-fast-path) below).
+
+```bash
+uv add "image-proc-toolkit @ git+https://github.com/yapitsmejs/imageProcToolkit.git"
+# or:
+python -m pip install "git+https://github.com/yapitsmejs/imageProcToolkit.git"
 ```
 
 Pin to a specific commit (or a tag, once one is cut — same `@<ref>` syntax):
 
 ```bash
-uv add "git+https://github.com/yapitsmejs/imageProcToolkit.git@<commit-sha>"
-```
-
-### pip (any virtualenv)
-
-```bash
-python -m venv .venv
-# Windows:  .venv\Scripts\activate      | macOS/Linux:  source .venv/bin/activate
-python -m pip install "git+https://github.com/yapitsmejs/imageProcToolkit.git"
-```
-
-Pin to a commit/tag:
-
-```bash
-python -m pip install "git+https://github.com/yapitsmejs/imageProcToolkit.git@<commit-sha>"
+uv add "image-proc-toolkit @ git+https://github.com/yapitsmejs/imageProcToolkit.git@<commit-sha>"
 ```
 
 ## Set up cupy (optional GPU fast-path)
@@ -59,9 +51,10 @@ GPU path, and install it into the **same venv** that holds `imageProcToolkit`.
    nvidia-smi           # no toolkit -> read the "CUDA Version:" the driver supports
    ```
 
-2. Install the matching wheel. Pick `cupy-cuda11x`, `cupy-cuda12x`, or `cupy-cuda13x`
-   by your CUDA major (11, 12, or 13). If you have a GPU but **no** CUDA Toolkit, add
-   the `[ctk]` extra so the wheel bundles CUDA libraries via PyPI.
+2. Install the matching wheel. Pick `cupy-cuda11x`, `cupy-cuda12x`, or
+   `cupy-cuda13x` by your CUDA major (11, 12, or 13). If you have a GPU but **no**
+   CUDA Toolkit, add the `[ctk]` extra so the wheel bundles CUDA libraries via
+   PyPI.
 
    uv:
 
@@ -77,8 +70,8 @@ GPU path, and install it into the **same venv** that holds `imageProcToolkit`.
    python -m pip install "cupy-cuda12x[ctk]"
    ```
 
-   Only **one** `cupy-cuda*x` distribution may be installed at a time — if you are
-   upgrading or switching CUDA versions, uninstall the others first:
+   Only **one** `cupy-cuda*x` distribution may be installed at a time — if you
+   are upgrading or switching CUDA versions, uninstall the others first:
 
    ```bash
    uv pip uninstall cupy cupy-cuda11x cupy-cuda12x cupy-cuda13x
@@ -93,11 +86,11 @@ GPU path, and install it into the **same venv** that holds `imageProcToolkit`.
 
 ### Option B — reuse the toolkit's auto-detecting installer (convenience)
 
-This repo ships `scripts/install_cupy.py`, which auto-detects the GPU + CUDA Toolkit
-and installs the right wheel (no GPU → installs nothing; GPU + toolkit →
-`cupy-cuda{MAJOR}x`; GPU, no toolkit → `cupy-cuda{MAJOR}x[ctk]`). It installs into its
-**own** repo's `.venv`, so to use it for your external repo, fetch just the script and
-run it from your repo root (it auto-detects `REPO_ROOT/.venv`):
+This repo ships `scripts/install_cupy.py`, which auto-detects the GPU + CUDA
+Toolkit and installs the right wheel (no GPU → installs nothing; GPU + toolkit →
+`cupy-cuda{MAJOR}x`; GPU, no toolkit → `cupy-cuda{MAJOR}x[ctk]`). It installs
+into its **own** repo's `.venv`, so to use it for your external repo, fetch just
+the script and run it from your repo root (it auto-detects `REPO_ROOT/.venv`):
 
 ```bash
 # macOS/Linux
@@ -131,10 +124,10 @@ from imageProcToolkit.similarityTransform2d import similarityTransform2d
 from imageProcToolkit.coSimilarityTransform2d import coSimilarityTransform2d
 ```
 
-Co-register a stack of complex or real images — `arrayScale` declares the inputs' unit
-(`'amplitude'` or `'intensity'`). The transform is estimated on an intensity-derived
-proxy and applied to the **original** inputs, so complex in → complex out (phase
-preserved for interferometry), real in → real out:
+Co-register a stack of complex or real images — `arrayScale` declares the inputs'
+unit (`'amplitude'` or `'intensity'`). The transform is estimated on an
+intensity-derived proxy and applied to the **original** inputs, so complex in →
+complex out (phase preserved for interferometry), real in → real out:
 
 ```python
 imgs = [np.ndarray, ...]                       # complex or real, all same shape
@@ -145,17 +138,18 @@ transformed, params, diag = coTranslate2d(imgs, arrayScale='amplitude')
 # diag        : diagnostics dict (nPairs, residuals)
 ```
 
-For rotation/scale + translation co-registration (inputs need not be rotation-aligned),
-use `coSimilarityTransform2d` instead — it returns `(transformed, params(N,4), diag)`
-with per-image `(theta, s, dy, dx)`.
+For rotation/scale + translation co-registration (inputs need not be
+rotation-aligned), use `coSimilarityTransform2d` instead — it returns
+`(transformed, params(N,4), diag)` with per-image `(theta, s, dy, dx)`.
 
 ### Register toward a master image
 
-By default both orchestrators estimate **every** image pair (O(N²) pairs) and solve a
-zero-mean gauge (no image is ground truth). Pass `masterIndex=k` (negative wraps, so
-`-1` = the last image) to pin image `k` at the identity and register every other image
-toward it; this also switches estimation to the **O(N)** star graph (only the N−1
-master↔image pairs are estimated), which is faster for large stacks:
+By default both orchestrators estimate **every** image pair (O(N²) pairs) and
+solve a zero-mean gauge (no image is ground truth). Pass `masterIndex=k`
+(negative wraps, so `-1` = the last image) to pin image `k` at the identity and
+register every other image toward it; this also switches estimation to the
+**O(N)** star graph (only the N−1 master↔image pairs are estimated), which is
+faster for large stacks:
 
 ```python
 transformed, params, diag = coTranslate2d(imgs, arrayScale='amplitude', masterIndex=-1)
@@ -164,10 +158,11 @@ transformed, params, diag = coTranslate2d(imgs, arrayScale='amplitude', masterIn
 # to the master. diag['nPairs'] == N-1 (star), not N(N-1)/2 (all pairs).
 ```
 
-Trade-off: the star uses one measurement per non-master image with no cross-checking
-from other pairs, so it is less noise-robust than the all-pairs least-squares.
+Trade-off: the star uses one measurement per non-master image with no
+cross-checking from other pairs, so it is less noise-robust than the all-pairs
+least-squares.
 
-## Modules
+### Modules
 
 | Module | Description |
 | --- | --- |
@@ -182,6 +177,48 @@ from other pairs, so it is less noise-robust than the all-pairs least-squares.
 | `similarityTransform2d` | Atomic 4-DOF similarity warp (rotation + uniform scale + translation). |
 | `coSimilarityTransform2d` | Multi-image similarity co-registration orchestrator (steps 2-3-4b-5). |
 
+## Development
+
+```bash
+uv run pytest                       # run tests (dev loop, no coverage gate)
+uv run ruff check .                 # lint
+uv run ruff format .                # format
+uv run mypy src/imageProcToolkit     # type check
+uv run python scripts/check.py      # GATE: lint + format + types + tests + branch coverage ≥ 90%
+```
+
+Run `scripts/check.py` before pushing or opening a PR — it fails if ruff is
+unhappy, formatting would change, **mypy** finds a type error, or branch
+coverage on the package drops below 90%. See [`CONVENTIONS.md`](CONVENTIONS.md)
+for the full naming, code-style, CuPy/GPU, and test-driven conventions.
+
+### Automation
+
+These run the same gate as you do locally, so a red PR cannot merge:
+
+- **CI** (`.github/workflows/ci.yml`) runs `scripts/check.py` on every push and
+  PR.
+- **Git hooks** (`.githooks/`) are opt-in per clone — fast `ruff` checks on
+  commit, the full gate on push. One-time setup:
+  ```bash
+  git config core.hooksPath .githooks
+  git update-index --chmod +x .githooks/pre-commit .githooks/pre-push
+  ```
+  Use `git commit --no-verify` during active red-phase work; the pre-push hook
+  and CI still enforce before anything lands.
+- **Dependabot** (`.github/dependabot.yml`) opens weekly dependency PRs (uv +
+  GitHub Actions) that must pass the gate like any other.
+- **PR template** (`.github/PULL_REQUEST_TEMPLATE.md`) prompts contributors for
+  the red-green workflow and the gate checklist.
+
+### GPU self-checks
+
+The `__main__` self-checks (e.g. `uv run python -m imageProcToolkit.fftUpsample`)
+compare the CuPy path against the NumPy reference (the cupy check is skipped
+with `no GPU` on CPU-only hosts; the NumPy self-checks run on every host). Run
+them after touching the FFT/phase-correlation code on a GPU machine. (These are
+excluded from the coverage gate — see `CONVENTIONS.md` "GPU coverage rule".)
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see the `license` field in `pyproject.toml`.

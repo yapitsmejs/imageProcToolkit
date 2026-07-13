@@ -96,7 +96,10 @@ def pick_wheel(gpu: dict | None, toolkit: dict | None) -> tuple[str, str]:
         suffix = WHEEL_SUFFIX.get(major)
         if suffix is None:
             _fail_unsupported(major)
-        return f"cupy-{suffix}", f"CUDA Toolkit {toolkit['version']} present -> {suffix} (uses system CUDA, no bundle)"
+        return (
+            f"cupy-{suffix}",
+            f"CUDA Toolkit {toolkit['version']} present -> {suffix} (uses system CUDA, no bundle)",
+        )
 
     # GPU but no toolkit: infer CUDA major from the driver's max supported CUDA.
     major = None
@@ -143,9 +146,14 @@ def install(pkg: str) -> None:
 
 
 def verify() -> None:
-    r = run([str(VENV_PYTHON), "-c",
-             "import cupy; print(cupy.__version__); "
-             "print('devices:', cupy.cuda.runtime.getDeviceCount())"])
+    r = run(
+        [
+            str(VENV_PYTHON),
+            "-c",
+            "import cupy; print(cupy.__version__); "
+            "print('devices:', cupy.cuda.runtime.getDeviceCount())",
+        ]
+    )
     if r and r[0] == 0:
         ver, devs = r[1].strip().splitlines()
         print(f"[+] cupy {ver} installed; {devs}")

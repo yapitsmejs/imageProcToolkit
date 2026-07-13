@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+# Pre-push hook: full gate (lint + format + types + tests + >=90% branch coverage).
+#
+# One-time setup (per clone):
+#   git config core.hooksPath .githooks
+#   git update-index --chmod=+x .githooks/pre-commit .githooks/pre-push
+#
+# Bypass with `git push --no-verify` (this same gate also runs in CI).
+
+uv run python scripts/check.py

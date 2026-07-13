@@ -1,32 +1,45 @@
+"""MATLAB ``interp2(...,'linear')`` port (numba fused-kernel backend, NumPy fallback)."""
+
+from __future__ import annotations
+
 import math
+from typing import Any
+
 import numpy as np
+
+__all__ = ["interp2linear"]
 
 # numba is an optional accelerator for interp2linear. If it is unavailable the
 # pure-NumPy reference path is used instead, so the module never hard-fails.
 try:
     from numba import njit, prange
+
     _HAVE_NUMBA = True
-except ImportError:
+except ImportError:  # pragma: no cover  -- numba is a declared dep; except is unreachable
     _HAVE_NUMBA = False
 
 
-if _HAVE_NUMBA:
+if _HAVE_NUMBA:  # pragma: no cover  -- numba JIT body is not seen by coverage.py
+
     @njit(parallel=True, cache=True)
-    def _interp2linear_numba(z, xi, yi, ncols, nrows, extrapval):
+    def _interp2linear_numba(
+        z: np.ndarray, xi: np.ndarray, yi: np.ndarray, ncols: int, nrows: int, extrapval: Any
+    ) -> np.ndarray:
         """Fused bilinear-interpolation kernel (compiled, parallel over output pts).
 
-        Reads four neighbours + two float32 weights per output point and writes the
-        result in a single pass, with no full-size temporaries — the dominant cost
-        of the NumPy reference is the ~dozen 133M-element arrays its expression
-        graph materialises, not the arithmetic. Edge/out-of-range handling mirrors
-        interp2linear exactly so the output stays equivalent to MATLAB interp2.
+        Reads four neighbours + two float32 weights per output point and writes
+        the result in a single pass, with no full-size temporaries -- the
+        dominant cost of the NumPy reference is the ~dozen 133M-element arrays its
+        expression graph materialises, not the arithmetic. Edge/out-of-range
+        handling mirrors ``interp2linear`` exactly so the output stays equivalent
+        to MATLAB ``interp2``.
         """
         n = xi.size
         out = np.empty(n, dtype=z.dtype)
         ncols_m1 = np.float32(ncols - 1)
         nrows_m1 = np.float32(nrows - 1)
         one = np.float32(1.0)
-        for k in prange(n):
+        for k in prange(n):  # type: ignore[attr-defined]
             x = xi[k]
             y = yi[k]
             if x < 0.0 or x > ncols_m1 or y < 0.0 or y > nrows_m1:
@@ -35,9 +48,10 @@ if _HAVE_NUMBA:
             x0 = np.intp(math.floor(x))
             y0 = np.intp(math.floor(y))
             # On the far edge the +1 neighbour would be out of bounds: step one
-            # cell back and let the fractional weight reach 1 (matches interp2linear).
-            on_x = (x == ncols_m1)
-            on_y = (y == nrows_m1)
+            # cell back and let the fractional weight reach 1 (matches
+            # interp2linear).
+            on_x = x == ncols_m1
+            on_y = y == nrows_m1
             if on_x:
                 x0 = x0 - 1
             if on_y:
@@ -59,11 +73,13 @@ if _HAVE_NUMBA:
         return out
 
 
-def _interp2linear_numpy(z, xi, yi, ncols, nrows, extrapval):
+def _interp2linear_numpy(
+    z: np.ndarray, xi: np.ndarray, yi: np.ndarray, ncols: int, nrows: int, extrapval: Any
+) -> np.ndarray:
     """Pure-NumPy reference path (also the fallback when numba is absent).
 
-    Identical math/edge logic to _interp2linear_numba; kept as the ground truth
-    for the equivalence self-check and so the module works without numba.
+    Identical math/edge logic to ``_interp2linear_numba``; kept as the ground
+    truth for the equivalence self-check and so the module works without numba.
     """
     out_shape = xi.shape
     xi = np.ascontiguousarray(xi, dtype=np.float32).ravel()
@@ -100,27 +116,38 @@ def _interp2linear_numpy(z, xi, yi, ncols, nrows, extrapval):
 
     one_minus_fy = 1.0 - fy
     one_minus_fx = 1.0 - fx
-    f = (z00 * one_minus_fy + z01 * fy) * one_minus_fx + (
-        z10 * one_minus_fy + z11 * fy) * fx
+    f = (z00 * one_minus_fy + z01 * fy) * one_minus_fx + (z10 * one_minus_fy + z11 * fy) * fx
 
     if bad.any():
         f[bad] = extrapval
 
-    return f.reshape(out_shape)
+    out: np.ndarray = f.reshape(out_shape)
+    return out
 
 
-def interp2linear(z, xi, yi, extrapval=np.nan):
-    """Bilinear interpolation, equivalent to MATLAB interp2(z, xi, yi, 'linear').
+def interp2linear(
+    z: np.ndarray, xi: np.ndarray, yi: np.ndarray, extrapval: float = np.nan
+) -> np.ndarray:
+    """Bilinear interpolation, equivalent to MATLAB ``interp2(z, xi, yi, 'linear')``.
 
-    z: 2-D array sampled on the integer lattice [0..ncols) x [0..nrows) (C order).
-    xi, yi: arrays of column/row coordinates at which to interpolate.
-    extrapval: fill value for out-of-range coordinates (default NaN).
+    Args:
+        z: 2-D array sampled on the integer lattice ``[0..ncols) x [0..nrows)``
+            (C order).
+        xi: array of column coordinates at which to interpolate.
+        yi: array of row coordinates at which to interpolate (same shape as
+            ``xi``).
+        extrapval: fill value for out-of-range coordinates (default NaN).
 
-    Uses the numba-compiled fused kernel when numba is available (single pass,
-    no full-size temporaries, parallel over output points); otherwise falls back
-    to the pure-NumPy reference. Both paths stay in the input dtype throughout —
-    coordinates/weights are float32 so a complex64 gather-and-weight never
-    upcasts to complex128 — and the caller's xi/yi arrays are not modified.
+    Returns:
+        Interpolated values, same shape as ``xi`` / ``yi``.
+
+    Notes:
+        Uses the numba-compiled fused kernel when numba is available (single
+        pass, no full-size temporaries, parallel over output points); otherwise
+        falls back to the pure-NumPy reference. Both paths stay in the input
+        dtype throughout -- coordinates/weights are float32 so a complex64
+        gather-and-weight never upcasts to complex128 -- and the caller's ``xi``/
+        ``yi`` arrays are not modified.
     """
     nrows, ncols = z.shape
     if nrows < 2 or ncols < 2:
@@ -133,31 +160,59 @@ def interp2linear(z, xi, yi, extrapval=np.nan):
         zr = np.ascontiguousarray(z, dtype=z.dtype).ravel()
         xi_c = np.ascontiguousarray(xi, dtype=np.float32).ravel()
         yi_c = np.ascontiguousarray(yi, dtype=np.float32).ravel()
-        out = _interp2linear_numba(zr, xi_c, yi_c, np.intp(ncols), np.intp(nrows), extrap)
+        out = _interp2linear_numba(zr, xi_c, yi_c, int(ncols), int(nrows), extrap)
         return out.reshape(xi.shape)
 
-    return _interp2linear_numpy(z, xi, yi, ncols, nrows, extrap)
+    return _interp2linear_numpy(
+        z, xi, yi, ncols, nrows, extrap
+    )  # pragma: no cover  -- numba is a declared dep; fallback is unreachable
 
 
-def _interp2linear_selfcheck():
+def _interp2linear_selfcheck() -> bool:
     """Equivalence check: numba path vs NumPy reference on a small random grid.
 
     Covers interior points, the far-edge step-back case, and out-of-range coords
     (NaN fill). Verifies value closeness and that NaN positions match exactly.
     """
-    if not _HAVE_NUMBA:
+    if not _HAVE_NUMBA:  # pragma: no cover  -- numba is a declared dep; skip branch is unreachable
         print("numba not available — self-check skipped (NumPy path only).")
         return True
 
     rng = np.random.default_rng(0)
     nrows, ncols = 37, 29
-    z = (rng.standard_normal((nrows, ncols)) + 1j * rng.standard_normal((nrows, ncols))).astype(np.complex64)
+    z = (rng.standard_normal((nrows, ncols)) + 1j * rng.standard_normal((nrows, ncols))).astype(
+        np.complex64
+    )
 
     # a mix of interior, edge, just-outside, and clearly-out-of-range query points
-    xs = np.array([-0.5, 0.0, 0.3, 1.25, 5.9, float(ncols - 1), float(ncols - 0.25),
-                   float(ncols), float(ncols + 2)], dtype=np.float32)
-    ys = np.array([float(nrows - 1), 0.0, 2.7, 4.1, float(nrows - 1), 0.0,
-                   float(nrows - 0.5), float(nrows), -1.0], dtype=np.float32)
+    xs = np.array(
+        [
+            -0.5,
+            0.0,
+            0.3,
+            1.25,
+            5.9,
+            float(ncols - 1),
+            float(ncols - 0.25),
+            float(ncols),
+            float(ncols + 2),
+        ],
+        dtype=np.float32,
+    )
+    ys = np.array(
+        [
+            float(nrows - 1),
+            0.0,
+            2.7,
+            4.1,
+            float(nrows - 1),
+            0.0,
+            float(nrows - 0.5),
+            float(nrows),
+            -1.0,
+        ],
+        dtype=np.float32,
+    )
     xi, yi = np.meshgrid(xs, ys)
 
     ref = _interp2linear_numpy(z, xi, yi, ncols, nrows, z.dtype.type(np.nan))
@@ -176,14 +231,16 @@ def _interp2linear_selfcheck():
     max_diff = np.nanmax(np.abs(got[finite] - ref[finite])) if finite.any() else 0.0
 
     ok = bool(nan_match and vals_close)
-    print(f"interp2linear self-check: {'PASS' if ok else 'FAIL'} "
-          f"(nan_mask={nan_match}, values_close={vals_close}, "
-          f"max_abs_diff={max_diff:.3e})")
+    print(
+        f"interp2linear self-check: {'PASS' if ok else 'FAIL'} "
+        f"(nan_mask={nan_match}, values_close={vals_close}, "
+        f"max_abs_diff={max_diff:.3e})"
+    )
     if not ok:
         print("ref:\n", ref)
         print("got:\n", got)
     return ok
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     _interp2linear_selfcheck()

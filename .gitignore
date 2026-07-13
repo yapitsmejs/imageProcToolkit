@@ -1,4 +1,8 @@
+# Python bytecode
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
 
 # Build / packaging artifacts
 build/
@@ -6,13 +10,42 @@ dist/
 *.egg-info/
 .eggs/
 *.egg
+wheels/
 
 # Test / lint caches
 .tox/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
 
 # Virtual environments
 .venv/
 venv/
+env/
+ENV/
+
+# Type checkers
+.pyre/
+.pytype/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env
+.env

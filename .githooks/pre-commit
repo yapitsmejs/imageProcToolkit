@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+# Pre-commit hook: fast lint + format check.
+#
+# One-time setup (per clone):
+#   git config core.hooksPath .githooks
+#   git update-index --chmod=+x .githooks/pre-commit .githooks/pre-push
+#
+# Bypass during active red-phase work with `git commit --no-verify`.
+# The full gate (tests + coverage + types) runs on the pre-push hook and in CI.
+
+set -e
+
+uv run ruff check .
+uv run ruff format --check .
+
+echo "pre-commit: ruff check + format --check OK"

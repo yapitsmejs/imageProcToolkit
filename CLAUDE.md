@@ -1,84 +1,54 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides agent-memory aid for Claude Code (claude.ai/code) when
+working with code in this repository. **Naming, code style, the CuPy/GPU
+convention, the 5-step co-registration pipeline, sign convention, gauge rules,
+and the commit convention live in [`CONVENTIONS.md`](CONVENTIONS.md)** — read
+that first and follow it. This file only holds project-specific context that
+does not belong in the conventions doc.
 
-## What this is
+## Project
 
-`imageProcToolkit` — a flat, src-layout Python package of image-processing accelerators and a multi-image co-registration pipeline. Complex (SAR / interferometry) inputs are first-class: phase is preserved through co-registration. `numpy` + `numba` are required; `cupy` is an optional GPU fast-path with a NumPy fallback. The package is **not on PyPI** — it is installed from GitHub.
+`imageProcToolkit` — a flat, src-layout Python package of image-processing
+accelerators and a multi-image co-registration pipeline. Complex (SAR /
+interferometry) inputs are first-class: phase is preserved through
+co-registration. `numpy` + `numba` are required; `cupy` is an optional GPU
+fast-path with a NumPy fallback. The package is **not on PyPI** — it is installed
+from GitHub. Import name `imageProcToolkit` (camelCase), dist name
+`image-proc-toolkit` (kebab).
 
 ## Commands
 
-The project uses `uv` (there is a `uv.lock`). There is no declared test dependency, so pytest is pulled ephemerally:
+This project is [uv](https://docs.astral.sh/uv/)-managed.
 
 ```bash
-uv sync                                    # install numpy/numba into .venv
-uv run --with pytest pytest tests/ -q      # run the smoke tests
-uv run --with pytest pytest tests/test_smoke.py::test_coTranslate2d_master_index_pins_last -q   # one test
+uv sync --extra dev                                          # .venv + runtime deps (numpy, numba) + dev tooling (pytest, ruff, mypy)
+uv run python scripts/check.py                               # GATE: ruff + format + mypy + tests + >=90% branch coverage
+uv run pytest                                                # dev loop (no coverage gate)
+uv run python -m imageProcToolkit.fftUpsample                 # __main__ self-check (cupy-vs-NumPy; skips GPU part on CPU hosts)
+uv run python -m imageProcToolkit._phaseCorrelationCore        # __main__ self-check (cupy-vs-NumPy; skips GPU part on CPU hosts)
+uv run python -m imageProcToolkit.clamp                        # __main__ self-check (clamp joint-across-channels)
+uv run python -m imageProcToolkit.interp2                     # __main__ self-check (numba-vs-NumPy; skips on no-numba)
+uv run python -m imageProcToolkit.similarityTransform2d        # __main__ self-check (rot/scale round-trip + dtype preservation)
+uv run python -m imageProcToolkit.getSimilarityTransform       # __main__ self-check (2-node known-similarity recovery, the sign arbiter)
+uv run python -m imageProcToolkit.coSimilarityTransform2d     # __main__ self-check (2-image end-to-end alignment)
+uv run python scripts/install_cupy.py                         # detect GPU/CUDA and install the matching CuPy wheel (dev only; not shipped in the wheel)
 ```
 
-If the network is unavailable, the smoke tests are plain `test_*` functions with bare asserts and no pytest import, so they also run under a trivial manual harness:
-```bash
-uv run python -c "import tests.test_smoke as t; [getattr(t,n)() for n in dir(t) if n.startswith('test_')]"
-```
+## Notes for the agent
 
-Every module that does estimation or warping ships a `_<moduleName>_selfcheck()` function that synthesizes a known transform and verifies recovery — these are the real correctness arbiter, not the smoke tests. Run the one for the module you touched:
-```bash
-uv run python -c "from imageProcToolkit.coSimilarityTransform2d import _coSimilarityTransform2d_selfcheck as f; f()"
-```
-Self-checks print `... self-check: PASS (...)`. There is no linter/formatter configured.
-
-`scripts/install_cupy.py` auto-detects GPU + CUDA Toolkit and installs the matching `cupy-cuda{MAJOR}x` wheel (or `[ctk]` bundled variant, or nothing if no GPU) into `.venv`. It is run from a repo root and auto-detects `REPO_ROOT/.venv`.
-
-## Architecture
-
-### The co-registration pipeline is a 5-step recipe shared by two orchestrators
-
-`coTranslate2d` (2-DOF translation) and `coSimilarityTransform2d` (4-DOF similarity = rotation + uniform scale + translation) run the same conceptual pipeline. Reading either orchestrator requires understanding all five steps, which span multiple modules:
-
-1. **toIntensity** (`_toIntensity` in each orchestrator) — resolve inputs to real float32 intensity per `arrayScale`: complex → `|z|²`, real `'amplitude'` → `x²`, real `'intensity'` → passthrough.
-2. **clamp** (`clamp.clamp`) — 10·log10 intensity-dB dynamic-range clamp. `clamp` is unit-unaware (speaks only intensity), so the orchestrator resolves to intensity first.
-3. **normalize** (`normalizeArray.normalizeToUint8`) — clamped intensity → per-image uint8.
-4. **estimate** (`getTranslationalShifts` / `getSimilarityTransform`) — all-pairwise estimation on the uint8, then a global least-squares solve for per-image params.
-5. **apply** (`fftTranslate2d` / `similarityTransform2d`) — warp each **original input** by its per-image params. dtype-preserving: complex in → complex out (phase preserved), real in → real out.
-
-**The key branch / invariant:** steps 2–4 are *estimation-only* on the uint8/clamped-intensity proxy (phase correlation and Fourier-Mellin are brightness-invariant). Step 5 applies the estimated transform to the **original inputs** — this is what preserves complex phase. `arrayScale` is the input-unit contract threaded from step 2 through step 5; the warps are unit-preserving.
-
-### Estimation = pairwise + a gauge-constrained global solve
-
-Both estimators follow the same shape: compute pairwise transforms for a set of image pairs, then solve a global least-squares for per-image params. The normal equations are `L p = -d` where `L` is the unweighted graph Laplacian of the observation graph and `d` aggregates the pairwise edge vectors. `L` is singular (the all-ones null space = the gauge freedom), so a gauge must be fixed:
-
-- **zero-mean gauge** (default, `masterIndex=None`): all `n(n-1)/2` pairs are estimated (the complete graph), then `sum(p) = 0` via the augmented system `[[L, 1],[1.T, 0]] @ [p, lam] = [-d, 0]`. No image is ground truth; the correction is distributed symmetrically. O(N²) estimation.
-- **fix-node gauge** (`masterIndex=k`, negative wraps so `-1` = last image): pin image `k` at the identity (`p_k = 0`) by dropping row/col `k` and solving the reduced full-rank `L_ff p_f = -d_f`. **Setting `masterIndex` also switches estimation to the O(N) star graph** — only the `n-1` master↔image pairs are estimated, not all pairs. The orchestrators build `starPairs = [(min(i, k), max(i, k)) for i in range(n) if i != k]` and pass it to the estimators via their `pairs=` filter. The star + fix-node solve is exact: one edge per non-master image ⇒ `p_i = "transform to apply to i to align it to master k"`. Trade-off: no cross-checking between non-master images, so less noise-robust than all-pairs.
-
-The shared gauge solve lives in `getTranslationalShifts._solveLaplacianGauge(L, d, masterIndex)` and is reused by `getSimilarityTransform.solveGlobalSimilarityRotScale` (`getSimilarityTransform` imports `getTranslationalShifts`). The `pairs=None` filter on `allPairwiseTranslationalShifts` / `allPairwiseSimilarityTransforms` is the mechanism that bounds estimation scope; `None` = all pairs. Both orchestrators thread `masterIndex` through; `coSimilarityTransform2d` uses the **same** master (and the same star pair list) for both its rot/scale stage and translation stage so the composed `(theta, log s, dy, dx)` pins the master end-to-end.
-
-**Sign convention (critical, easy to get wrong):** `pairwise...(A, B)` returns the transform to **apply to B** to align it to **A** (A = master, B = slave). The per-image params satisfy `p_j - p_i = s_ij` at the optimum. For translation `s_ji = -s_ij`; for rot/scale `theta_ji = -theta_ij`, `log s_ji = -log s_ij`. The scale column in the params is **log s** — `exp` it for the applied scale (the warper does this internally). The `(min, max)` edge keying in the star pair list preserves this convention, so the existing solve handles the star with no sign special-casing.
-
-### `coSimilarityTransform2d` is a two-stage decoupled solve
-
-Stage 1 estimates rotation+scale via Fourier-Mellin (log-polar spectra + phase correlation) on the uint8 magnitude spectra → per-image `(theta, log s)`. Stage 2 de-rotates + de-scales the **clamped intensity** (float32, not the uint8), re-derives masks from `np.isfinite` of the de-warped float (the warp NaN-marks its out-of-source border), re-normalizes to uint8, and reuses `getTranslationalShifts` for `(dy, dx)`. This decoupling exists because rotation/scale and translation are solved in different coordinate systems (Lie-algebra-additive rot/scale vs. additive translation). **Consequence:** the two stages are not independently gauge-equivalent — stage-2 inputs depend on stage-1's gauge via the dewarp, so re-running with a different `masterIndex` perturbs stage 2 slightly. With the star-estimation change, the master run also uses a *different set of pairwise measurements* than the all-pairs zero-mean run, so `params_master ≠ params_zm − params_zm[master]` even for `coTranslate2d` — do not assert gauge-equivalence across the two modes.
-
-### Module roles and dependency shape
-
-The package is **flat** (no subpackages). Dependency flow is roughly:
-
-```
-fftUpsample ──┐
-              ├─> _phaseCorrelationCore ──> getTranslationalShifts ──┐
-interp2 ──────┘                                      │              ├─> coTranslate2d
-   │                                                ┌─┘              │
-   └────> similarityTransform2d ────────────────────┤                ├─> coSimilarityTransform2d
-                                       fftTranslate2d ───────────────┘
-clamp, normalizeArray — leaf utilities used by the orchestrators
-```
-
-- **`_phaseCorrelationCore`** — the sign-sensitive phase-correlation primitives (normalized cross-power surface, 3×3 quad-fit sub-pixel peak, wraparound pick) shared by both estimators. It also owns the **cupy GPU gate**: `_HAVE_CUPY_GPU` is detected at import (a CUDA device must actually be present; cupy importing is not enough) and the dispatch is internal to `_phaseCorrelationMap`. The FFT cross-power step is an `xp`-parameterized `_phaseCorrelation_core(A, B, shape, xp)` (rfft2 cross-power + normalize + irfft2); the mean-removal / mask intersection / valid-count stay host-side NumPy, and `_phaseCorrelationMap` auto-dispatches that one FFT step on `_HAVE_CUPY_GPU` (numpy in → numpy out, round-tripped via `cp.asnumpy`). The two estimator modules re-bind these private names at import time (`from ._phaseCorrelationCore import ...`) so their public surface — including private names callers may have imported — is unchanged. Do not reference `cp` / `_HAVE_CUPY_GPU` from the estimator modules; keep the dispatch inside `_phaseCorrelationCore`.
-- **`fftUpsample`** / **`interp2`** — accelerators with backends: cupy GPU (with NumPy fallback) and numba fused-kernel respectively. `fftUpsample` follows the cross-repo CuPy convention (canonical reference: `sarChangeDetection/.../getTestStatistics.py`): the compute is an `xp`-parameterized `_fourierUpsample_core(a, up, axis, xp)` and the public `fourierUpsample` auto-dispatches on `_HAVE_CUPY_GPU` — cupy in → cupy out (kept resident across chained per-axis upsamples), numpy in → numpy out (auto round-tripped via `cp.asnumpy`). `_fourierUpsample_cupy_selfcheck` (run via `python -m imageProcToolkit.fftUpsample`) compares the GPU path to a NumPy reference produced by calling the core with `np` directly (bypassing auto-dispatch). `interp2` is a MATLAB `interp2(...,'linear')` port.
-- **`fftTranslate2d`** — atomic FFT sub-pixel translation; **`similarityTransform2d`** — atomic 4-DOF similarity warp (bilinear inverse-map rot/scale, then FFT phase-ramp translate). `similarityTransformImages` is the batched loop over `similarityTransform2d`; `coTranslate2d` defines its own `fftTranslateImages` batched loop.
-
-### Conventions to follow
-
-- **Masks come from the input, never the uint8.** `normalizeToUint8` maps NaN → 0 sentinel, so NaN borders are undetectable in the uint8. Derive valid-pixel masks from `np.isfinite` of the original input (or of the de-warped float, in stage 2).
-- **Module-level docstrings are the design doc.** Each estimator/orchestrator module opens with a long `'''...'''` docstring explaining the math (sign convention, gauge, residual model), the step decomposition, and the rationale. Match this style and keep these in sync when changing behavior — they are where the "why" lives (the `'''` string is the module docstring, not a comment).
-- **Self-checks are the arbiter.** When changing an estimator or warper, update/run the module's `_<moduleName>_selfcheck()` and confirm `PASS` with the recovered transform matching the synthetic ground truth to the documented tolerance.
-- **Public callables are imported from their submodules explicitly** (`from imageProcToolkit.X import Y`), not from the package root — keep the package `__init__` thin (it only carries `__version__` and a docstring).
+- The `__main__` self-checks and the `_<func>_cupy_selfcheck()` functions are
+  intentionally kept runnable for GPU developers but are excluded from the
+  coverage gate (`# pragma: no cover`) — see `CONVENTIONS.md` "GPU coverage
+  rule". Do not remove them; do not try to push them under the ≥90% gate.
+- `requires-python = ">=3.12"`. The package targets Python 3.12+.
+- Public callables are imported from their submodules explicitly
+  (`from imageProcToolkit.X import Y`), not from the package root — keep the
+  package `__init__` thin (it only carries `__version__` and a docstring).
+- **Self-checks are the arbiter.** When changing an estimator or warper, run the
+  module's `_<moduleName>_selfcheck()` and confirm `PASS` with the recovered
+  transform matching the synthetic ground truth to the documented tolerance.
+- `_phaseCorrelationCore` owns the cupy GPU gate (`_HAVE_CUPY_GPU`); the
+  estimator modules re-bind its primitives at import. Do not reference `cp` /
+  `_HAVE_CUPY_GPU` from the estimator modules — keep the dispatch inside
+  `_phaseCorrelationCore`.
